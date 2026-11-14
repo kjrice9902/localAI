@@ -467,6 +467,15 @@ details.think .tbody { padding: 0 14px 12px; font-size: .84em; color: var(--mute
 .mbody { flex: 1; min-width: 0; overflow-y: auto; padding: 22px 28px 30px; position: relative; }
 .mbody h3 { margin: 0 0 4px; font-size: 20px; }
 .mbody .lead { color: var(--muted); margin: 0 0 18px; font-size: 13px; }
+.feat-q { width: 100%; box-sizing: border-box; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; margin-bottom: 6px; }
+.feat h4 { margin: 18px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.feat h4 span { font-weight: 400; opacity: .7; }
+.feat-item { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.feat-item > div { flex: 1; min-width: 0; }
+.feat-item p { margin: 2px 0 3px; font-size: 13px; }
+.feat-item small { color: var(--muted); font-size: 12px; }
+.feat-go { flex: none; }
+.feat-none { color: var(--muted); }
 .close-x { position: absolute; top: 14px; right: 14px; }
 .row { display: flex; align-items: center; gap: 20px; padding: 15px 0; border-top: 1px solid var(--border); }
 .row.stack { flex-direction: column; align-items: stretch; gap: 10px; }
@@ -2410,7 +2419,124 @@ var ACCENTS = [   // [id, name, swatch]: multicolor first
   ["mono", "Monochrome", "linear-gradient(135deg,#f5f5f5,#8a8a8a 50%,#1a1a1a)"]
 ];
 var CTX_OPTS = [[8192, "8K"], [16384, "16K"], [32768, "32K"], [65536, "64K"], [131072, "128K"], [262144, "256K"]];
+// Settings > All features: a plain-language list of everything the app can do. [name, what it does, where to find it, settings tab]
+var FEATURES = [
+  { g: "Chatting", items: [
+    ["Two models, picked for you", "Auto sends everyday chat to Qwen and code, audio and app work to Gemma, one message at a time. The app always opens in Auto.", "Model button in the top bar", "model"],
+    ["Pick a model yourself", "Choose Qwen or Gemma by hand. That turns Auto off until the next launch.", "Top bar, or ⌘1 / ⌘2", "model"],
+    ["Pin a model to one chat", "One chat always uses the model you pinned, even with Auto on.", "Model menu, Pin to this chat"],
+    ["Think", "The model reasons before answering. Better on hard problems, 30 s to 2 min slower. Always off when the app opens.", "Think button under the message box", "model"],
+    ["Answer style", "Normal, Short, Detailed or Blunt answers in every chat.", "Settings, Chat", "chat"],
+    ["Edit and resend", "Change a message you sent and get a new answer.", "Pencil under your message"],
+    ["Try again keeps every answer", "Ask again and flip between all the answers with ‹ ›.", "Arrow button under a reply"],
+    ["Branch a chat", "Start a new chat that copies this one up to a reply, to try a different direction.", "Branch button under a reply"],
+    ["Compare models", "The other model answers the same question; both show side by side and you keep the better one.", "Compare button under the last reply"],
+    ["Prompt shortcuts", "Save prompts you reuse, then type / and the name to drop one in.", "Settings, Prompts", "prompts"],
+    ["Switch chats during a reply", "Open other chats while an answer is still being written. The busy chat shows pulsing dots.", "Sidebar"],
+    ["Read aloud", "Hear any reply in your Mac's voice, or have every reply read out.", "Speaker under a reply; Settings, Chat", "chat"],
+    ["Dictation", "Talk instead of typing, recognized on this Mac.", "Mic button, or ⌘⇧M", "chat"],
+    ["Talk mode", "Hands-free: speak, hear the answer, speak again. Esc stops.", "Talk button under the message box"],
+    ["Quick ask from anywhere", "Press Control-Option-A in any app for a small box that starts a new chat here.", "Settings, Chat", "chat"],
+    ["Ask Local AI on selected text", "Select text in any app, then the app menu, Services, Ask Local AI.", "Services menu", "chat"],
+    ["Open at login", "Starts Local AI when you log in.", "Settings, Chat", "chat"]
+  ] },
+  { g: "Smarter answers", items: [
+    ["Effort: Normal, Careful, Deep", "Careful re-reads the answer and fixes a mistake it can name. Deep also plans and works through steps first. Slower, more careful.", "Careful button under the message box; Settings, Smarter answers", "smart"],
+    ["Not sure note", "When the model isn't confident, a note shows with a button to look it up on the web.", "Under the answer; Settings, Smarter answers", "smart"],
+    ["Second opinion", "The other model reviews the answer and says if it agrees.", "2nd button under the last answer"],
+    ["Web search", "Looks each message up on the internet first (DuckDuckGo) and answers with numbered sources. Off by default; the only thing that sends your words off the Mac.", "Web button under the message box"]
+  ] },
+  { g: "Files, photos and audio", items: [
+    ["Photos and screenshots", "Attach, paste or drag in a picture and ask about it.", "Paperclip button"],
+    ["Documents", "PDF, Word, RTF, OpenDocument, web pages and text. Hidden text and hidden instructions are removed before the model reads them.", "Paperclip button"],
+    ["Long documents", "Files too big to read whole (up to about 1000 pages) are searched, and the model is told which parts it did not read.", "Automatic"],
+    ["Search documents by meaning", "Finds passages that say the same thing in different words.", "Settings, Smarter answers", "smart"],
+    ["Audio", "Voice memos, recordings and songs for Gemma to listen to.", "Audio button", ""],
+    ["Long recordings", "Clips over 10 minutes (up to 3 hours) are written out word for word with time marks.", "Audio button"],
+    ["Watched folder", "Pick one folder of documents; matching passages are used in any chat. Nothing in it is changed.", "Settings, Smarter answers", "smart"]
+  ] },
+  { g: "Pictures", items: [
+    ["Picture maker", "Start a message with “Draw” or turn on Picture to make a new picture on this Mac.", "Picture button; size in Settings, Model", "model"],
+    ["Picture editor", "Change a picture: “add a dog”, “make it daytime”. Works on made pictures and your own photos.", "Edit this picture button under a picture"],
+    ["Pictures from the chat", "“Draw me based on that text” first has the model read the chat and plan the scene.", "Automatic"],
+    ["Save pictures", "Save button, or right-click a picture, Save Picture…", "Under a picture"]
+  ] },
+  { g: "Apps and code", items: [
+    ["Small apps", "Ask for an app or web page; it opens in the Preview panel, sealed off from the internet and your files.", "Preview panel", "chat"],
+    ["Artifacts button", "Brings back the apps and previews from this chat after the panel closes.", "Four-square button in the top bar"],
+    ["Edits instead of rewrites", "Small changes to an app are applied as edits to the one saved version.", "Automatic"],
+    ["Auto-fix", "If an app shows an error when it opens, the model is told and tries again, up to 3 times.", "Settings, Chat", "chat"],
+    ["Build next step", "Big apps get a short plan; one click builds the next part.", "Under the reply"],
+    ["My apps", "Every app the models made: open, rename, save as a file, delete.", "Settings, My apps", "apps"],
+    ["Fold code", "Code shows as a one-line bar you can open and close.", "Show code button; Settings, Chat", "chat"],
+    ["Run Python", "Python runs in a sealed box with no internet and no access to your files, with numpy, pandas and matplotlib for charts.", "Run button on a code block"],
+    ["Auto-run", "The model runs its own Python and uses the result, like a calculator.", "Auto-run button under the message box", "chat"],
+    ["Mac access", "Turn on Mac for a chat and the model can run commands on your real Mac. A window asks you before every one.", "Mac button under the message box", "mac"],
+    ["No-asking list and run history", "Simple safe commands you trust can skip the window; every run is logged.", "Settings, Mac access", "mac"]
+  ] },
+  { g: "Organizing", items: [
+    ["Projects", "Group chats, each with its own instructions and documents.", "Settings, Projects; project menu in the sidebar", "projects"],
+    ["Pin chats", "Keep chats at the top of the list. Pinned chats are never auto-deleted.", "Pin button on a chat"],
+    ["Search chats", "Search inside every chat, with highlights.", "Search box in the sidebar"],
+    ["Export", "Save a chat as Markdown, text or PDF.", "Export button"],
+    ["Private chat", "Never saved, never remembered, erased when you leave it.", "Button under New chat"],
+    ["Recently deleted", "Deleted chats are kept 30 days and can be restored.", "Settings, Privacy & storage", "privacy"]
+  ] },
+  { g: "Memory", items: [
+    ["Custom instructions", "Rules the model always follows in every chat.", "Settings, Memory", "memory"],
+    ["Saved memories", "Facts the model uses when they matter. Add, edit or remove them, or start a message with “Remember that…”.", "Settings, Memory; bookmark under your message", "memory"],
+    ["Auto-compact", "Long chats fold older messages into a summary so they never run out of room.", "Settings, Memory", "memory"],
+    ["Context panel", "Shows how full the chat is and what is using the room.", "Ring next to Send"]
+  ] },
+  { g: "Privacy, safety and storage", items: [
+    ["Runs offline", "Chats, files and pictures stay on this Mac. Only Web search and the Internet switch go online.", "Everywhere"],
+    ["Touch ID lock", "Asks for Touch ID or your password before showing chats.", "Settings, Privacy & storage", "privacy"],
+    ["Delete old chats", "Erase chats you haven't touched in a set time.", "Settings, Privacy & storage", "privacy"],
+    ["Backups", "One zip, or automatic backups to a folder with an optional password (AES-256).", "Settings, Privacy & storage", "privacy"],
+    ["Storage and models", "See what takes space, clean up, download, update or delete models.", "Settings, Privacy & storage", "privacy"],
+    ["Heat meter", "Shows how hard the Mac is working, with Compact, New chat, Free RAM and Restart.", "Top bar"],
+    ["Free RAM", "Unload the model until the next message.", "Settings, Model", "model"],
+    ["Updates", "Checks for a newer engine and new models only when you ask. Every download is checked before use.", "Settings, Updates", "updates"],
+    ["Check my app", "Tests each part of the app with a harmless test.", "Settings, About", "about"]
+  ] },
+  { g: "Looks", items: [
+    ["Themes and colors", "Dark, light or system, and many color themes.", "Settings, Appearance", "appearance"],
+    ["Text size and zoom", "Message and code text sizes; ⌘+ / ⌘− zooms.", "Settings, Appearance", "appearance"],
+    ["Plugin rail", "Reorder and color the side icons.", "Settings, Plugin rail", "rail"]
+  ] }
+];
+function featuresSection() {
+  var wrap = document.createElement("div");
+  wrap.className = "feat";
+  var total = 0;
+  FEATURES.forEach(function (g) { total += g.items.length; });
+  wrap.innerHTML = '<input type="search" class="feat-q" placeholder="Search ' + total + ' features" aria-label="Search features"><div class="feat-list"></div>';
+  var q = wrap.querySelector(".feat-q"), list = wrap.querySelector(".feat-list");
+  function draw() {
+    var s = q.value.trim().toLowerCase(), html = "", n = 0;
+    FEATURES.forEach(function (g) {
+      var rows = g.items.filter(function (f) { return !s || (g.g + " " + f[0] + " " + f[1] + " " + f[2]).toLowerCase().indexOf(s) >= 0; });
+      if (!rows.length) return;
+      n += rows.length;
+      html += '<h4>' + esc(g.g) + ' <span>' + rows.length + '</span></h4>';
+      rows.forEach(function (f) {
+        html += '<div class="feat-item"><div><b>' + esc(f[0]) + '</b><p>' + esc(f[1]) + '</p><small>' + esc(f[2]) + '</small></div>' +
+          (f[3] ? '<button class="btn feat-go" data-tab="' + f[3] + '">Open</button>' : '') + '</div>';
+      });
+    });
+    list.innerHTML = html || '<p class="feat-none">No feature matches “' + esc(q.value) + '”.</p>';
+  }
+  q.oninput = draw;
+  list.onclick = function (e) {
+    var b = e.target.closest ? e.target.closest(".feat-go") : null;
+    if (b && b.dataset.tab) { tab = b.dataset.tab; openSettings(); }
+  };
+  draw();
+  setTimeout(function () { q.focus(); }, 0);
+  return wrap;
+}
 var SECTIONS = [
+  { id: "features", label: "All features", lead: "Everything Local AI can do, in plain words, and where to find it. Click Open to jump to its settings.", items: [{ type: "features" }] },
   { id: "appearance", label: "Appearance", lead: "Make it yours. Changes apply instantly.", items: [
     { k: "theme", type: "seg", label: "Theme", opts: [["dark", "Dark"], ["light", "Light"], ["system", "System"]] },
     { k: "accent", type: "accent", label: "Color theme", desc: "The first four are multicolor (Rainbow, Tropical, Neon, Fiesta); the rest are single colors, and the last is Monochrome (no color at all). Hover a circle to see its name." },
@@ -2503,6 +2629,7 @@ function renderSection() {
     row.className = "row" + (it.type === "textarea" ? " stack" : "");
     var lbl = '<div class="lbl"><b>' + (it.label || "") + "</b>" + (it.desc ? "<small>" + it.desc + "</small>" : "") + "</div>";
     if (it.type === "rail") { body.appendChild(railSection()); return; }
+    if (it.type === "features") { body.appendChild(featuresSection()); return; }
     if (it.type === "apps") { body.appendChild(appsSection()); return; }
     if (it.type === "projects") { body.appendChild(projectsSection()); return; }
     if (it.type === "macaccess") { body.appendChild(macSection()); return; }
