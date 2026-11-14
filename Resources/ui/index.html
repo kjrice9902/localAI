@@ -355,6 +355,10 @@ details.think .tbody { padding: 0 14px 12px; font-size: .84em; color: var(--mute
 @keyframes flash { 0%, 40% { background: color-mix(in srgb, var(--a1) 14%, transparent); } 100% { background: transparent; } }
 .export-wrap { position: relative; }
 .export-menu { width: 230px; }
+.artlist-wrap #artListBtn { position: relative; }
+.art-cnt { position: absolute; top: -3px; right: -5px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--grad); color: #fff; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
+.artlist-menu { width: 290px; max-height: 60vh; overflow-y: auto; }
+.artlist-menu .model-row.on b::after { content: " · open"; font-weight: 500; color: var(--a2); }
 .mem-add { display: flex; gap: 8px; }
 .mem-add input { flex: 1; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border2); background: var(--bg2); outline: none; font-size: 13.5px; }
 .mem-add input:focus { border-color: var(--a1); }
@@ -590,6 +594,7 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); }
       <span class="pill pin" id="pinBadge" hidden title="This chat always uses this model. Click to unpin."></span>
       <select class="proj-sel" id="projSel" hidden title="The project this chat belongs to"></select>
       <div class="heat-wrap"><span class="pill heat" id="heat" title="How hard your Mac is working"><i></i><span id="heatText">Cool</span></span><div class="model-menu" id="heatMenu"></div></div>
+      <div class="export-wrap artlist-wrap" id="artListWrap" hidden><button class="icon-btn" id="artListBtn" title="Artifacts in this chat: apps, drawings and previews"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span class="art-cnt" id="artCnt"></span></button><div class="model-menu export-menu artlist-menu" id="artListMenu"></div></div>
       <div class="export-wrap"><button class="icon-btn" id="exportBtn" title="Export this chat"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></button><div class="model-menu export-menu" id="exportMenu"></div></div>
       <span class="pill" id="ctxPill" title="Context window for this model"><b id="ctxPillVal">32K</b> context</span>
       <div class="model-wrap">
@@ -2542,7 +2547,7 @@ function renderThread(keepScroll) {
     box.appendChild(el);
   });
   if (keepScroll) sc.scrollTop = prev; else sc.scrollTop = sc.scrollHeight;
-  updateMeter(); onScroll();
+  updateMeter(); onScroll(); updateArtListBtn();
 }
 function dividerEl() {
   var frag = document.createDocumentFragment();
@@ -3145,6 +3150,55 @@ function openExportMenu() {
 function closeExportMenu() { $("#exportMenu").classList.remove("show"); }
 $("#exportBtn").onclick = function (e) { e.stopPropagation(); if ($("#exportMenu").classList.contains("show")) closeExportMenu(); else { closeModelMenu(); openExportMenu(); } };
 document.addEventListener("click", function (e) { if (!e.target.closest || !e.target.closest(".export-wrap")) closeExportMenu(); });
+// Artifacts in this chat: every app version, drawing and script preview, so they
+// can be opened again after the chat was closed (the preview panel belongs to one chat).
+function chatArtifacts() {
+  var out = [];
+  if (!cur) return out;
+  var vers = appVers(cur), curV = appCurIndex(cur);
+  vers.forEach(function (v, i) {
+    out.push({ icon: "A", title: (cur.appName || v.title || "App") , sub: "App, version " + (i + 1) + " of " + vers.length + (i === vers.length - 1 ? " (latest)" : ""),
+      on: art.open && art.kind === "html" && art.ver === i, open: function () { showAppVersion(cur, i); } });
+  });
+  var n = 0;
+  Array.prototype.forEach.call(document.querySelectorAll("#thread .msg .code"), function (c) {
+    var langEl = c.querySelector(".lang"), codeEl = c.querySelector("code");
+    if (!langEl || !codeEl) return;
+    var lang = langEl.textContent, code = codeEl.textContent, kind = codeKind(lang, code);
+    if (kind !== "html" && kind !== "svg" && kind !== "js") return;
+    if (kind === "html" && vers.length) return;              // already listed above as app versions
+    n++;
+    var tm = kind === "html" && /<title[^>]*>([^<]{1,80})<\/title>/i.exec(code);
+    out.push({ icon: kind === "svg" ? "D" : kind === "js" ? "S" : "W",
+      title: (tm && tm[1].trim()) || (kind === "svg" ? "Drawing" : kind === "js" ? "Script" : "Web page"),
+      sub: (kind === "svg" ? "Drawing" : kind === "js" ? "JavaScript output" : "Web page") + " · item " + n,
+      on: art.open && art.code === code, open: function () { openArtFrom(c); c.scrollIntoView({ block: "center", behavior: "smooth" }); } });
+  });
+  return out;
+}
+function updateArtListBtn() {
+  var n = chatArtifacts().length;
+  $("#artListWrap").hidden = !n;
+  $("#artCnt").textContent = n > 99 ? "99+" : String(n);
+  if (!n) closeArtListMenu();
+}
+function openArtListMenu() {
+  var box = $("#artListMenu"), list = chatArtifacts(); box.innerHTML = "";
+  if (!list.length) { box.innerHTML = '<p class="rail-note" style="padding:10px 12px;margin:0">No apps or previews in this chat yet.</p>'; }
+  var apps = list.filter(function (a) { return a.icon === "A"; }).reverse(), rest = list.filter(function (a) { return a.icon !== "A"; }).reverse();
+  apps.concat(rest).forEach(function (a) {                       // apps first, newest first; then drawings and scripts, newest first
+    var r = document.createElement("button"); r.className = "model-row" + (a.on ? " on" : "");
+    r.innerHTML = '<span class="mi"></span><span class="mt"><b></b><small></small></span>';
+    r.querySelector(".mi").style.background = "var(--grad)";
+    r.querySelector(".mi").textContent = a.icon; r.querySelector("b").textContent = a.title; r.querySelector("small").textContent = a.sub;
+    r.onclick = function (e) { e.stopPropagation(); closeArtListMenu(); a.open(); };
+    box.appendChild(r);
+  });
+  box.classList.add("show");
+}
+function closeArtListMenu() { $("#artListMenu").classList.remove("show"); }
+$("#artListBtn").onclick = function (e) { e.stopPropagation(); if ($("#artListMenu").classList.contains("show")) closeArtListMenu(); else { closeModelMenu(); closeExportMenu(); openArtListMenu(); } };
+document.addEventListener("click", function (e) { if (!e.target.closest || !e.target.closest(".artlist-wrap")) closeArtListMenu(); });
 
 /* ---------- search inside chats ---------- */
 var searchSeq = 0, searchResults = null;
@@ -3595,6 +3649,7 @@ document.addEventListener("keydown", function (e) {
   else if (mod && e.shiftKey && e.key.toLowerCase() === "m") { e.preventDefault(); if (dict.on) stopDictation(); else startDictation(); }
   else if (e.key === "Escape") {
     if ($("#heatMenu").classList.contains("show")) $("#heatMenu").classList.remove("show");
+    else if ($("#artListMenu").classList.contains("show")) closeArtListMenu();
     else if ($("#exportMenu").classList.contains("show")) closeExportMenu();
     else if ($("#modelMenu").classList.contains("show")) closeModelMenu();
     else if ($("#modalBg").classList.contains("show")) closeSettings();
