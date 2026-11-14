@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "about": "The list Local AI reads when you click Check now in Settings > Updates. A model added here is offered to every copy of the app whose Mac has enough memory. The two built-in models (qwen3.5:9b and gemma4:12b-mlx) are not listed; they are always there. Fields per model: id (the Ollama tag; it must be a build the app's engine can run, which today means an MLX build), label, short, maker, blurb, size_gb, max_ctx, rec_ctx, route (chat or code), min_ram_gb, why (one sentence shown to the user), replaces (the id it is meant to take over from).",
+  "models": []
+}

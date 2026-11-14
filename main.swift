@@ -22,6 +22,7 @@ import PDFKit
 import CryptoKit
 import LocalAuthentication
 import Carbon.HIToolbox
+import ServiceManagement
 
 let appName = "Local AI"
 
@@ -375,6 +376,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         waitForServer(attempt: 0)
         NSApp.activate(ignoringOtherApps: true)
         if quickAskEnabled() { setQuickAsk(true) }
+        NSApp.servicesProvider = self
     }
 
     // MARK: quick ask (Control-Option-A from any app, while Local AI is open)
@@ -466,14 +468,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     // The folder for automatic backups: picked here, in a real folder panel, never typed by the page.
-    func pickBackupFolder() {
+    func pickBackupFolder(watch: Bool = false) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Use This Folder"
-        panel.message = "Pick the folder where Local AI puts its automatic backups"
+        panel.canCreateDirectories = !watch
+        panel.message = watch ? "Pick the folder whose documents Local AI may read and search in every chat"
+                              : "Pick the folder where Local AI puts its automatic backups"
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
             self.emit(["type": "folder", "path": url.path])
@@ -676,7 +680,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func startOllama() {
         if portTaken(ollamaPort, "its models") { return }
         let bundled = Bundle.main.resourceURL!.appendingPathComponent("bin/ollama").path
-        let candidates = [bundled]          // only the copy inside the app, never one found elsewhere on the Mac
+        // The copy inside the app, or a newer one the user installed from Settings > Updates (kept in the app's
+        // data folder and used only if Ollama's own signature is on every part of it). Never one found elsewhere.
+        let newer = installedEngine()
+        usingInstalledEngine = newer != nil
+        engineStarted = Date()
+        let candidates = [newer ?? bundled]
         guard let bin = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
             NSLog("LocalAI: no ollama binary found"); return
         }
@@ -684,6 +693,110 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         ollamaProc?.terminationHandler = { [weak self] _ in
             DispatchQueue.main.async { self?.ollamaEnded() }
         }
+    }
+
+    // MARK: a newer engine installed by the user
+    static let engineRule = "anchor apple generic and certificate leaf[subject.OU] = \"3MU9H2V9Y9\""   // Ollama's Apple developer team
+    var usingInstalledEngine = false
+    var engineStarted = Date()
+
+    /// Runs a small tool and waits for it, but never longer than `seconds` (a stuck tool counts as a failure).
+    static func runQuiet(_ path: String, _ args: [String], env: [String: String]? = nil, seconds: Double = 60) -> (Int32, String) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = args
+        if let env = env { p.environment = env }
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+        do { try p.run() } catch { return (-1, "") }
+        let done = DispatchSemaphore(value: 0)
+        var data = Data()
+        DispatchQueue.global().async { data = pipe.fileHandleForReading.readDataToEndOfFile(); done.signal() }
+        if done.wait(timeout: .now() + seconds) == .timedOut {
+            p.terminate()
+            _ = done.wait(timeout: .now() + 3)
+            return (-1, "")
+        }
+        p.waitUntilExit()
+        return (p.terminationStatus, String(data: data.prefix(4000), encoding: .utf8) ?? "")
+    }
+
+    static func engineVersion(_ bin: String) -> String {
+        let (_, out) = runQuiet(bin, ["--version"], env: ["HOME": NSTemporaryDirectory(), "PATH": "/usr/bin:/bin", "OLLAMA_HOST": "127.0.0.1:9"], seconds: 15)
+        guard let r = out.range(of: "[0-9]{1,4}\\.[0-9]{1,4}\\.[0-9]{1,4}", options: .regularExpression) else { return "0.0.0" }
+        return String(out[r])
+    }
+
+    /// The path of the engine the user installed, if it is newer than the built-in one and every
+    /// program and library in its folder is signed by Ollama. Anything else: nil (use the built-in one).
+    func installedEngine() -> String? {
+        let fm = FileManager.default
+        let dir = supportDir.appendingPathComponent("engine")
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent("current.json")),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let ver = obj["version"] as? String,
+              ver.range(of: "^[0-9]{1,4}\\.[0-9]{1,4}\\.[0-9]{1,4}$", options: .regularExpression) != nil else { return nil }
+        let folder = dir.appendingPathComponent(ver).resolvingSymlinksInPath()
+        let bin = folder.appendingPathComponent("ollama").path
+        guard folder.path.hasPrefix(supportDir.resolvingSymlinksInPath().path + "/"), fm.isExecutableFile(atPath: bin) else { return nil }
+        let machO: [[UInt8]] = [[0xcf, 0xfa, 0xed, 0xfe], [0xce, 0xfa, 0xed, 0xfe], [0xca, 0xfe, 0xba, 0xbe], [0xbe, 0xba, 0xfe, 0xca], [0xca, 0xfe, 0xba, 0xbf]]
+        guard let walker = fm.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else { return nil }
+        var checked = 0
+        for case let f as URL in walker {
+            let vals = try? f.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            if vals?.isSymbolicLink == true {
+                if !f.resolvingSymlinksInPath().path.hasPrefix(folder.path + "/") { return nil }
+                continue
+            }
+            guard vals?.isRegularFile == true else { continue }
+            guard let h = try? FileHandle(forReadingFrom: f) else { return nil }
+            let head = [UInt8](h.readData(ofLength: 4))
+            try? h.close()
+            if machO.contains(head) {
+                if Self.runQuiet("/usr/bin/codesign", ["--verify", "--strict", "-R=" + Self.engineRule, f.path]).0 != 0 {
+                    NSLog("LocalAI: installed engine failed its signature check (%@); using the built-in one", f.lastPathComponent)
+                    return nil
+                }
+                checked += 1
+            } else if head.starts(with: [0x23, 0x21]) {
+                return nil                       // a script has no place in the engine
+            }
+        }
+        guard checked > 0 else { return nil }
+        let builtIn = Self.engineVersion(Bundle.main.resourceURL!.appendingPathComponent("bin/ollama").path)
+        guard Self.engineVersion(bin) == ver, ver.compare(builtIn, options: .numeric) == .orderedDescending else { return nil }
+        return bin
+    }
+
+    // MARK: "Ask Local AI" in the Services menu (text selected in any app)
+    var pendingAsk: String?
+    @objc func askLocalAI(_ pboard: NSPasteboard, userData: String, error: AutoreleasingUnsafeMutablePointer<NSString>) {
+        guard let s = pboard.string(forType: .string) else { return }
+        let text = String(s.trimmingCharacters(in: .whitespacesAndNewlines).prefix(20000))
+        guard !text.isEmpty else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        pendingAsk = text
+        deliverPendingAsk()
+    }
+
+    func deliverPendingAsk() {
+        guard let text = pendingAsk, loaded, lockView == nil, !blocked else { return }
+        pendingAsk = nil
+        // The page needs a moment after it loads before it can take the text.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.emit(["type": "askText", "text": text]) }
+    }
+
+    func loginItemOn() -> Bool { SMAppService.mainApp.status == .enabled }
+    func setLoginItem(_ on: Bool) {
+        do {
+            if on { if !loginItemOn() { try SMAppService.mainApp.register() } }
+            else if loginItemOn() { try SMAppService.mainApp.unregister() }
+        } catch {
+            emit(["type": "note", "message": "Couldn't change Open at login: \(error.localizedDescription)", "err": true])
+        }
+        emit(["type": "loginItem", "on": loginItemOn()])
     }
 
     // If the model server stops while the app is open, its port is free for a
@@ -698,6 +811,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             serverProc?.terminate()
             return showError("The model server stopped and another program took its port (\(ollamaPort)).\n" +
                              "Local AI stopped so your chats aren't sent to it.\n\nQuit that program, then open Local AI again.")
+        }
+        if usingInstalledEngine && Date().timeIntervalSince(engineStarted) < 120 {
+            // The engine the user installed stopped right after starting: go back to the built-in one for good.
+            NSLog("LocalAI: the installed engine stopped right away; going back to the built-in one")
+            try? FileManager.default.removeItem(at: supportDir.appendingPathComponent("engine/current.json"))
+            startOllama()
+            return
         }
         // At most 3 restarts in any hour. (A per-crash countdown let a server that
         // died every 5-9 minutes restart forever.)
@@ -952,7 +1072,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if webView.url?.host == "127.0.0.1" { loaded = true }
+        if webView.url?.host == "127.0.0.1" { loaded = true; deliverPendingAsk() }
         setPreviewOpen(false)          // a freshly loaded page has no preview open
     }
 
@@ -1130,7 +1250,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         case "backup":
             saveBackup()
         case "pickFolder":
-            pickBackupFolder()
+            pickBackupFolder(watch: body["for"] as? String == "watch")
+        case "loginItem":
+            setLoginItem(body["on"] as? Bool ?? false)
+        case "loginState":
+            emit(["type": "loginItem", "on": loginItemOn()])
         case "quickAsk":
             setQuickAsk(body["on"] as? Bool ?? false)
         case "ctxImage":      // the page says which of its pictures was just right-clicked ("" = none)

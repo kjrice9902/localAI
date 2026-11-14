@@ -36,6 +36,24 @@
 	<string>Local AI uses the microphone so you can dictate messages. Your voice is recognized on this Mac.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Ask Local AI</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>askLocalAI</string>
+			<key>NSPortName</key>
+			<string>Local AI</string>
+			<key>NSSendTypes</key>
+			<array>
+				<string>NSStringPboardType</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Local AI turns your speech into text on this Mac so you can talk to the model.</string>
 </dict>

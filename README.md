@@ -136,6 +136,9 @@ Everything the app creates is stored on your Mac, never in this repo:
   models/           chat models (step 3)
   imagegen/         picture models + their Python (step 4)
   pyenv/            code sandbox libraries (step 5)
+  watch/            cleaned text of the documents in your watched folder (rebuilt from the folder)
+  engine/           a newer model engine, if you installed one from Settings > Updates
+  models-extra.json, updates.json   models you added from the list, and the last update check
   server.log, ollama.log   logs from the last run
 ```
 
@@ -157,6 +160,35 @@ The `Library` folder is hidden. In Finder, press **Cmd+Shift+G** and paste
   the same path on the other Mac. That includes the models (about 26 GB). The
   `imagegen/venv` and `pyenv` environments only work if the other Mac has the
   same macOS username and Python 3.13. If not, redo steps 4 and 5.
+
+## Smarter answers, watched folder, updates
+
+All of these are in **Settings** (the first three under **Smarter answers**).
+
+- **Effort (Normal / Careful / Deep).** Careful: after it answers, the model
+  re-reads its answer; it may only rewrite it if it can name a specific mistake,
+  and the first draft stays one click away. Deep: it first plans, works through
+  the steps one at a time, writes the answer from those notes, then checks it.
+  Careful is about twice as slow, Deep three to five times. The **Careful**
+  button under the message box switches between them.
+- **Say when it isn't sure.** The model rates each answer; a "Not sure" note with
+  a **Look it up on the web** button shows when it isn't confident.
+- **Second opinion** (the **2nd** button under an answer): the other model
+  reviews the answer and says whether it agrees.
+- **Search long documents by meaning.** For a document too long to read whole,
+  the model first lists other words for your question, so passages that say the
+  same thing in different words are found too.
+- **Watched folder.** Pick one folder of your documents. They are read on your
+  Mac through the same sandboxed readers as attachments, and passages that match
+  a message are handed to the model in any chat. Nothing in the folder is changed.
+- **Updates.** **Check now** asks GitHub for the newest Ollama release and reads
+  `setup/models.json` from this repo. An engine update is accepted only if its
+  SHA-256 matches the published one and every program in it is signed by
+  Ollama's Apple developer team; the app checks that signature again every time
+  it starts, and falls back to the built-in engine if anything is off. Models on
+  the list are only added to your model menu; you choose when to download.
+- **Open at login** and **Ask Local AI** (select text in any app, then the app
+  menu → Services → Ask Local AI) are under **Settings → Chat**.
 
 ## Rebuilding after changes
 
