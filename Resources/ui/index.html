@@ -102,7 +102,7 @@ input, textarea, select { font: inherit; color: inherit; }
 .app { position: relative; z-index: 1; display: flex; height: 100vh; }
 .sidebar { width: 280px; flex: none; display: flex; flex-direction: column; background: var(--panel); backdrop-filter: blur(24px) saturate(1.4); -webkit-backdrop-filter: blur(24px) saturate(1.4); border-right: 1px solid var(--border); transition: margin .35s var(--ease), transform .35s var(--ease); }
 .app.collapsed .sidebar { margin-left: -280px; }
-.main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; container-type: inline-size; container-name: main; }
 
 .brand { display: flex; align-items: center; gap: 10px; padding: 18px 16px 10px; }
 .brand .orb { width: 30px; height: 30px; }
@@ -266,6 +266,14 @@ input, textarea, select { font: inherit; color: inherit; }
 .code-head button:hover { background: var(--active); color: var(--text); }
 .code pre { margin: 0; padding: 14px 16px; overflow-x: auto; font-family: var(--mono); font-size: var(--cfs); line-height: 1.55; }
 .code pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+.code-lines { color: var(--faint); font-family: inherit; }
+.code.folded pre { display: none; }
+.code.folded .code-head { border-bottom: 0; cursor: pointer; }
+.code-head button.fold-code { color: var(--text); }
+.code-head { gap: 8px; }
+.code-head .lang { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-head .acts { flex: none; flex-wrap: wrap; justify-content: flex-end; }
+.code-head button { white-space: nowrap; }
 .cursor { display: inline-block; width: .5em; height: 1.05em; vertical-align: -.15em; margin-left: 2px; border-radius: 2px; background: var(--grad); animation: blink 1s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 .err { color: #f87171; background: color-mix(in srgb, #ef4444 12%, transparent); border: 1px solid color-mix(in srgb, #ef4444 35%, transparent); padding: 10px 14px; border-radius: 12px; font-size: .9em; }
@@ -535,6 +543,14 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 /* ------------------------------------------------------------ small apps: preview panel + run output */
 .art { display: none; flex: none; width: 46%; min-width: 340px; max-width: 920px; flex-direction: column; background: var(--panel-solid); border-left: 1px solid var(--border); position: relative; z-index: 2; }
 .app.art-open .art { display: flex; }
+/* The top bar must fit the chat column, however narrow the preview panel makes it:
+   less important pieces step aside first, and nothing may spill into the panel. */
+@container main (max-width: 760px) { #ctxPill { display: none; } }
+@container main (max-width: 660px) { #heatText { display: none; } .topbar .heat { padding-left: 8px; padding-right: 8px; } }
+@container main (max-width: 580px) { #modelName, .model-btn .chev { display: none; } .model-btn { padding-right: 6px; } #projSel { max-width: 110px; } }
+@container main (max-width: 470px) { #pinBadge, #projSel { display: none; } }
+.topbar > * { flex-shrink: 0; }
+.topbar > .title { flex-shrink: 1; }
 .art-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--border); min-height: 46px; }
 .art-title { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .art-tabs { display: flex; flex: none; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
@@ -902,7 +918,7 @@ function randHex(n) {
 }
 function codeKind(lang, code) {
   var l = String(lang || "").toLowerCase().split(/[\s:{,]/)[0], head = String(code).slice(0, 400).replace(/^\s+/, "").toLowerCase();
-  if (l === "edit") return "edit";
+  if (l === "edit" || isEditText(code)) return "edit";
   if (l === "python" || l === "py" || l === "python3") return "py";
   if (l === "html" || l === "htm" || l === "xhtml" || head.indexOf("<!doctype html") === 0 || head.indexOf("<html") === 0) return "html";
   if (l === "svg" || head.indexOf("<svg") === 0 || (head.indexOf("<?xml") === 0 && head.indexOf("<svg") > 0)) return "svg";
@@ -1270,10 +1286,22 @@ function refreshVerNav() {
   $("#artVers").hidden = !on;
   if (on) { $("#artVerText").textContent = "Version " + (art.ver + 1) + " of " + n; $("#artPrev").disabled = art.ver <= 0; $("#artNext").disabled = art.ver >= n - 1; }
 }
+// Small models often put FIND / REPLACE text in an ```html block (or forget a REPLACE). That text is
+// instructions for changing the app, never the app itself.
+function isEditText(code) {
+  var c = String(code || "");
+  if (/^\s*(?:<!doctype|<html)/i.test(c)) return false;
+  return /^\s*FIND:[ \t]*(\n|$)/i.test(c) || /^\s*<{5,}/.test(c) || (/(^|\n)FIND:[ \t]*\n/i.test(c.slice(0, 600)) && /\nREPLACE(?: WITH)?:[ \t]*(\n|$)/i.test(c));
+}
+function looksLikePage(code) {
+  var c = String(code || "");
+  return !isEditText(c) && /<(?:!doctype|html|head|body|style|script|div|main|section|header|h[1-6]|p|svg|canvas|button|form|table|ul)\b/i.test(c.slice(0, 4000));
+}
 function parseEdits(text) {
-  var out = [], re = /```edit[^\n]*\n([\s\S]*?)\n?```/gi, x;
+  var out = [], re = /```([^\n`]*)\n([\s\S]*?)\n?```/g, x;
   while ((x = re.exec(text))) {
-    var raw = x[1], pairs = [], st = 0, pa = [], pb = [];
+    if (!/^\s*edit\b/i.test(x[1]) && !isEditText(x[2])) continue;
+    var raw = x[2], pairs = [], st = 0, pa = [], pb = [];
     raw.split("\n").forEach(function (ln) {
       if (/^<{5,}/.test(ln)) { st = 1; pa = []; pb = []; }
       else if (st === 1 && /^={5,}/.test(ln)) st = 2;
@@ -1284,6 +1312,7 @@ function parseEdits(text) {
     if (!pairs.length) ("\n" + raw).split(/\nFIND:[ \t]*\n?/i).slice(1).forEach(function (p) {
       var k = p.search(/(^|\n)REPLACE(?: WITH)?:[ \t]*(\n|$)/i);
       if (k >= 0) pairs.push([p.slice(0, k), p.slice(k).replace(/^\n?REPLACE(?: WITH)?:[ \t]*\n?/i, "")]);
+      else pairs.push([p, null]);              // a FIND with no REPLACE: the edit is unfinished and must not be half-applied
     });
     out.push({ raw: raw, pairs: pairs });
   }
@@ -1314,7 +1343,7 @@ function applyEdits(code, edits) {
   var failed = [];
   edits.forEach(function (e, k) {
     var work = code, bad = !e.pairs.length;
-    e.pairs.forEach(function (p) { if (bad) return; var r = applyOneEdit(work, p[0], p[1]); if (r === null) bad = true; else work = r; });
+    e.pairs.forEach(function (p) { if (bad) return; var r = p[1] === null ? null : applyOneEdit(work, p[0], p[1]); if (r === null) bad = true; else work = r; });
     if (bad) failed.push(k); else code = work;
   });
   return { code: code, failed: failed };
@@ -1345,7 +1374,7 @@ function autoPreview(m) {
   var btns = document.querySelectorAll("#thread .msg.last .code .prev-code"), pick = null;
   for (var i = 0; i < btns.length; i++) {
     var c = btns[i].closest(".code"), tx = c.querySelector("code").textContent;
-    if (tx.length > 200 && codeKind(c.querySelector(".lang").textContent, tx) === "html") pick = c;
+    if (tx.length > 200 && codeKind(c.querySelector(".lang").textContent, tx) === "html" && looksLikePage(tx)) pick = c;
   }
   if (pick) {
     var code = gatherApp(pick), vi = pushAppVersion(t, code, false);
@@ -1361,7 +1390,7 @@ function autoPreview(m) {
   });
   renderThread(true);
   if (res.failed.length) {
-    if (S.auto_fix !== false) autoTell(t, "Your edit could not be applied: the FIND lines are not in the app's file exactly as you wrote them. This is the current file. Write the edit again with FIND lines copied exactly from it, or write the whole file again in an ```html block.\n```html\n" + base.code + "\n```");
+    if (S.auto_fix !== false) autoTell(t, "Your edit could not be applied (a FIND did not match the file exactly, or a FIND had no REPLACE). Nothing was changed. This is the app's current file. Do NOT write FIND / REPLACE again: write the WHOLE updated file, complete, in one ```html block that starts with <!DOCTYPE html>.\n```html\n" + base.code + "\n```");
     else toast("That edit didn't match the app's code. Ask the model to write the whole file again.", "err");
     return;
   }
@@ -1901,6 +1930,7 @@ function routeModel(text, t, hasAudio, hasImage) {
   if (hasImage && r && !(modelById(r) || {}).vision && eyeModel()) return eyeModel().id;
   return r;
 }
+var APP_FOLLOW_RE = /\b(app|build|next step|edit|fix|broke|broken|wrong|button|buttons|tab|tabs|screen|page|feature|features|add|change|remove|show|shows|showing|display|layout|design|colou?rs?|work|works|working|preview|version|undo|redo it|again)\b/i;
 function routeText(text, t, hasAudio) {
   var code = modelByRoute("code"), chat = modelByRoute("chat");
   if (!code || !chat) return null;
@@ -1908,6 +1938,7 @@ function routeText(text, t, hasAudio) {
   if (!chat.installed) return code.id;
   if (hasAudio && earModel()) return earModel().id;
   if (CODE_RE.test(text)) return code.id;
+  if (appVers(t).length && APP_FOLLOW_RE.test(text)) return code.id;      // talk about the app in this chat goes to the model that codes
   // Short follow-ups ("now make it blue", "why?") stay with the model that was coding.
   if (lastAssistantModel(t) === code.id && text.length < 80 && FOLLOW_RE.test(text.trim())) return code.id;
   return chat.id;
@@ -2063,13 +2094,20 @@ function blocks(text, depth) {
   flush();
   return out.join("");
 }
+var codeOpen = {};   // code blocks you opened or closed by hand (this session)
 function md(src) {
   var re = /```([^\n`]*)\n?([\s\S]*?)(?:```|$)/g, out = "", last = 0, m;
   while ((m = re.exec(src))) {
     out += blocks(esc(src.slice(last, m.index)));
     var lang = (m[1] || "").trim() || "code", body = m[2].replace(/\n$/, "");
-    var kind = /```$/.test(m[0]) && body ? codeKind(lang, body) : "";      // only finished blocks can be run
-    out += '<div class="code"><div class="code-head"><span class="lang">' + esc(lang) + '</span><span class="acts">' + codeButtons(kind) + '<button class="save-code" title="Save this code to a file">Save</button><button class="copy-code">Copy</button></span></div><pre><code>' + esc(body) + "</code></pre></div>" + (kind === "py" || kind === "sh" || kind === "edit" ? runOutHtml(body) : "");
+    var done = /```$/.test(m[0]), kind = done && body ? codeKind(lang, body) : "";      // only finished blocks can be run
+    // Folded code: just a one-line bar ("html · 214 lines") until you click Show code.
+    // Your choice per block is kept while the reply is still being written.
+    var nl = body ? body.split("\n").length : 0, fk = lang + "|" + body.slice(0, 120);
+    var folded = codeOpen.hasOwnProperty(fk) ? !codeOpen[fk] : (!S || S.fold_code !== false) && nl > 3;
+    out += '<div class="code' + (folded ? " folded" : "") + '" data-fk="' + esc(fk) + '"><div class="code-head"><span class="lang">' + esc(lang) +
+      '<span class="code-lines"> · ' + nl + " line" + (nl === 1 ? "" : "s") + (done ? "" : " · writing…") + '</span></span><span class="acts">' +
+      '<button class="fold-code" title="Show or hide this code">' + (folded ? "Show code" : "Hide code") + "</button>" + codeButtons(kind) + '<button class="save-code" title="Save this code to a file">Save</button><button class="copy-code">Copy</button></span></div><pre><code>' + esc(body) + "</code></pre></div>" + (kind === "py" || kind === "sh" || kind === "edit" ? runOutHtml(body) : "");
     last = re.lastIndex;
   }
   out += blocks(esc(src.slice(last)));
@@ -2177,7 +2215,7 @@ var rerenderAfterStream = false;    // a re-render asked for during a reply happ
 function rerenderSoon() { if (streaming || compacting) rerenderAfterStream = true; else renderThread(true); }
 function setSetting(k, v) {
   S[k] = v; applySettings(); pushSettings();
-  if (k === "fold_thinking" || k === "usage") rerenderSoon();
+  if (k === "fold_thinking" || k === "fold_code" || k === "usage") { if (k === "fold_code") codeOpen = {}; rerenderSoon(); }
 }
 function setModelCtx(id, v) {
   S.model_ctx = Object.assign({}, S.model_ctx || {}); S.model_ctx[id] = v;
@@ -2208,6 +2246,7 @@ var SECTIONS = [
   { id: "chat", label: "Chat", lead: "How conversations look and behave.", items: [
     { k: "density", type: "seg", label: "Transcript view", desc: "Compact fits more on screen.", opts: [["compact", "Compact"], ["comfortable", "Comfortable"]] },
     { k: "fold_thinking", type: "toggle", label: "Fold thinking", desc: "Collapse the model's reasoning under a “Thought for …” line. Click it to expand." },
+    { k: "fold_code", type: "toggle", label: "Fold code", desc: "Show code in replies as a one-line bar (language and number of lines) instead of the whole thing. Click Show code to open a block, Hide code to close it again." },
     { k: "usage", type: "seg", label: "Performance & usage", desc: "Token counts and speed under each reply.", opts: [["off", "Off"], ["compact", "Compact"], ["full", "Full"]] },
     { k: "send_key", type: "seg", label: "Send with", opts: [["enter", "Enter"], ["cmd-enter", "⌘ Enter"]] },
     { k: "auto_preview", type: "toggle", label: "Open apps automatically", desc: "When a reply contains a finished app or web page, the Preview panel opens by itself. Off means you click Preview on the code block." },
@@ -2382,6 +2421,18 @@ function renderSection() {
 function newThread() { return { id: uid(), title: DEFAULT_TITLE, created: Date.now(), updated: Date.now(), messages: [], summary: "", compactedUpTo: 0, ctxTokens: 0, model: ACTIVE, project: projFilter || undefined }; }
 function normalize(t) {
   t.messages = t.messages || []; t.summary = t.summary || ""; t.compactedUpTo = t.compactedUpTo || 0; t.ctxTokens = t.ctxTokens || 0;
+  if (Array.isArray(t.appVers) && t.appVers.length && !looksLikePage(t.appVers[appCurIndex(t)].code)) {
+    // The saved "app" is edit instructions or loose code, not a page (an old bug). Go back to the last real page in the chat.
+    var good = null, fr = /```([^\n`]*)\n([\s\S]*?)\n?```/g, fx;
+    t.messages.forEach(function (m) {
+      if (m.role !== "assistant" || typeof m.content !== "string") return;
+      fr.lastIndex = 0;
+      while ((fx = fr.exec(m.content))) if (fx[2].length > 200 && codeKind(fx[1], fx[2]) === "html" && looksLikePage(fx[2])) good = fx[2];
+    });
+    if (good) { var gt = /<title[^>]*>([^<]{1,80})<\/title>/i.exec(good); t.appVers = [{ code: good, ts: Date.now(), title: gt ? gt[1].trim() : "App", edited: false }]; t.appCur = 0; }
+    else { delete t.appVers; delete t.appCur; }
+    setTimeout(function () { if (!deletedIds[t.id]) saveThread(t, false, true); }, 0);
+  }
   if (Array.isArray(t.appVers) && t.appVers.length > 1) {      // chats from before "one version": keep the one in use, drop the rest
     t.appVers = [t.appVers[appCurIndex(t)]]; t.appCur = 0;
     setTimeout(function () { if (!deletedIds[t.id]) saveThread(t, false, true); }, 0);
@@ -2817,7 +2868,7 @@ $("#scroller").addEventListener("scroll", onScroll);
 // Rough token counts (about 3.3 characters per token) of everything the model
 // reads for this chat. After each reply the real count from the model replaces
 // the total (t.ctxTokens); the parts below are always estimates.
-var APP_RULES_CHARS = 2341, FILE_RULES_CHARS = 940;      // the server's APP_NOTE and FILE_GUARD
+var APP_RULES_CHARS = 2780, FILE_RULES_CHARS = 940;      // the server's APP_NOTE and FILE_GUARD
 function ctxParts(t, forCtx) {
   var c = forCtx || ctx(), p = { rules: APP_RULES_CHARS + (S.system_prompt || "").length, memory: 0, summary: (t.summary || "").length, msgs: 0, files: 0 }, anyFile = false;
   if (S.memory_on && memList().length) p.memory = memList().reduce(function (n, m) { return n + m.text.length + 3; }, 90);
@@ -4094,6 +4145,13 @@ $("#search").addEventListener("input", function () {
 });
 $("#modalBg").addEventListener("mousedown", function (e) { if (e.target === e.currentTarget) closeSettings(); });
 document.addEventListener("click", function (e) {
+  var fd = e.target.closest && (e.target.closest(".fold-code") || (e.target.closest(".code.folded .code-head") && !e.target.closest("button") && e.target.closest(".code-head")));
+  if (fd) {
+    var blk = fd.closest(".code"), nowFolded = blk.classList.toggle("folded");
+    codeOpen[blk.getAttribute("data-fk")] = !nowFolded;
+    var fb = blk.querySelector(".fold-code"); if (fb) fb.textContent = nowFolded ? "Show code" : "Hide code";
+    return;
+  }
   var b = e.target.closest && e.target.closest(".copy-code");
   if (b) copyText(b.closest(".code").querySelector("code").textContent, b);
   var sv = e.target.closest && e.target.closest(".save-code");

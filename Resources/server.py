@@ -259,10 +259,14 @@ APP_NOTE = (
     "tag, nothing left out or shortened. The preview is offline, so never load anything from the internet (no CDN "
     "links, outside libraries, web fonts or image URLs); draw with CSS, SVG, canvas or emoji instead. The app shows "
     "that page running in a Preview panel beside the chat, saves what it stores with localStorage, and lets the "
-    "user save the file. To CHANGE an app you already wrote, do not write it all again: write one ```edit block per "
-    "change, in exactly this form:\nFIND:\n(the exact existing lines to replace, copied from the file)\nREPLACE:\n(the "
-    "new lines)\nThe app applies the edits and reloads the preview. Keep each FIND short but exact. Only for a big "
-    "redesign, write the whole file again in an ```html block. For a bigger app with several features, first write a "
+    "user save the file. To CHANGE an app you already wrote, there are two ways. For a small change (a few lines), write an ```edit "
+    "block, in exactly this form:\nFIND:\n(a few existing lines, copied exactly from the file)\nREPLACE:\n(the new "
+    "lines)\nThe fence must say edit, never html, and every FIND needs its own REPLACE right after it. For anything "
+    "bigger (a new feature, a new tab, more than about 15 lines, or if you are not sure of the exact lines), write "
+    "the WHOLE updated file again in one ```html block starting with <!DOCTYPE html>. An ```html block must only ever "
+    "hold a complete page, never FIND / REPLACE text or loose pieces of code. A page you write cannot call an AI model "
+    "or the internet, so never fake such a feature with made-up sample results: say plainly that the small app cannot "
+    "do that part, and build the rest. For a bigger app with several features, first write a "
     "small working version with the most important feature, then end your reply with a short numbered list titled "
     "\"Next steps\" of what is still to add, and build one step per reply when the user asks. "
     "Python in a ```python block gets a Run button the user can click: standard library only, no internet, no "
@@ -348,6 +352,7 @@ DEFAULTS = {
     # chat view
     "density": "compact",      # compact | comfortable
     "fold_thinking": True,
+    "fold_code": True,         # code in replies shows as a one-line bar until opened
     "usage": "compact",        # off | compact | full
     "send_key": "enter",       # enter | cmd-enter
     "image_size": "square",    # picture maker: square (1024) | fast (768) | portrait | landscape
