@@ -9,9 +9,12 @@ only one is ever loaded in memory at a time. Nothing leaves 127.0.0.1.
 """
 import http.client
 import json
+import math
 import os
 import re
 import base64
+import zlib
+import collections
 import hashlib
 import hmac
 import http.cookies
@@ -70,6 +73,8 @@ THREADS_DIR = os.path.join(DATA_DIR, "threads")
 AUDIO_DIR = os.path.join(DATA_DIR, "audio")      # uploaded clips, converted to 16 kHz mono WAV
 IMAGE_DIR = os.path.join(DATA_DIR, "images")     # photos, converted to JPEG (max 1280 px)
 DOC_DIR = os.path.join(DATA_DIR, "docs")         # text pulled out of PDFs and documents
+TRASH_DIR = os.path.join(DATA_DIR, "trash")      # chats you deleted: kept 30 days, then gone for good
+TRASH_DAYS = 30
 # Scratch folders for uploads live here, not in the shared temp folder, so a
 # file reader (sandboxed to its own scratch folder) can never see another upload.
 SCRATCH_DIR = os.path.join(DATA_DIR, "tmp")
@@ -80,7 +85,7 @@ def scratch(prefix):
     return tempfile.mkdtemp(prefix=prefix, dir=SCRATCH_DIR)
 DOC_CLEAN = os.path.join(HERE, "doc_clean.py")                     # takes Word/RTF "hidden text" out before reading
 PDFTEXT = os.path.join(os.path.dirname(HERE), "MacOS", "pdftext")   # small PDFKit helper built by build.sh
-MAX_DOC_CHARS = 400000
+MAX_DOC_CHARS = 2000000        # about 600 pages; a document too long for the model is searched per question
 TEXT_EXTS = {"txt", "md", "markdown", "csv", "tsv", "json", "xml", "yaml", "yml", "log", "ini", "toml", "py", "js", "ts",
              "tsx", "jsx", "swift", "java", "c", "h", "cpp", "hpp", "cs", "go", "rs", "rb", "php", "sh", "zsh", "css", "sql", "kt"}
 RICH_EXTS = {"doc", "docx", "rtf", "rtfd", "odt", "html", "htm", "webarchive", "wordml"}
@@ -332,7 +337,10 @@ DEFAULTS = {
     "auto_run": True,          # run python blocks by themselves and send the output back to the model
     "auto_fix": True,          # when a previewed app shows an error, send it to the model to fix (a few tries)
     "style": "normal",         # how answers are written: normal | short | detailed | blunt
-    "projects": [],            # [{"id", "name", "instructions"}] folders of chats with their own instructions
+    "projects": [],            # [{"id", "name", "instructions", "files"}] folders of chats with their own instructions and documents
+    "auto_backup": "off",      # off | daily | weekly: copy a backup into backup_dir by itself
+    "backup_dir": "",          # the folder those backups go to (picked in Settings)
+    "quick_ask": True,         # Control-Option-A opens a small ask box from anywhere (read by the app shell)
     "run_seconds": 120,        # how long a program may run before it is stopped
     "memory_on": True,         # include saved memories in every chat
     "memories": [],            # [{"id", "text", "ts"}] facts to remember across chats
@@ -362,6 +370,7 @@ LIMITS = {
 }
 CHOICES = {
     "style": ("normal", "short", "detailed", "blunt"),
+    "auto_backup": ("off", "daily", "weekly"),
     "theme": ("dark", "light", "system"),
     "accent": ("rainbow", "tropical", "neon", "fiesta", "sunset", "ember", "candy", "rose", "gold",
                "forest", "mint", "ocean", "sky", "mono"),
@@ -372,6 +381,7 @@ CHOICES = {
     "auto_delete_days": (0, 7, 30, 90, 180, 365),
 }
 
+PROJECT_FILES_MAX = 20
 _lock = threading.Lock()
 _deleted = set()          # thread ids deleted while the app runs
 _info_cache = {}               # model id -> {"thinking", "vision", "max_ctx"}
@@ -471,7 +481,17 @@ def clean_settings(raw, base=None):
                         continue
                     seen.add(pid)
                     ins = item.get("instructions") if isinstance(item.get("instructions"), str) else ""
-                    kept.append({"id": pid, "name": _CONTROL.sub("", item["name"]).strip()[:60], "instructions": ins.strip()[:4000]})
+                    files, fseen = [], set()
+                    for f in (item.get("files") if isinstance(item.get("files"), list) else [])[:PROJECT_FILES_MAX]:
+                        if not isinstance(f, dict) or not isinstance(f.get("id"), str) or not MEDIA_ID.match(f["id"]) or f["id"] in fseen:
+                            continue
+                        fseen.add(f["id"])
+                        one = {"id": f["id"], "name": re.sub(r'[<>"&\x00-\x1f]', "", str(f.get("name") or "document"))[:120] or "document"}
+                        for k in ("pages", "words", "tokens"):
+                            if isinstance(f.get(k), (int, float)) and not isinstance(f.get(k), bool) and 0 <= f[k] < 1e9:
+                                one[k] = int(f[k])
+                        files.append(one)
+                    kept.append({"id": pid, "name": _CONTROL.sub("", item["name"]).strip()[:60], "instructions": ins.strip()[:4000], "files": files})
                 out["projects"] = kept
             continue
         if key == "memories":
@@ -528,6 +548,14 @@ def clean_settings(raw, base=None):
                 continue
         if key == "system_prompt":
             val = val[:20000]
+        if key == "backup_dir" and val:
+            # A real folder path, written out in full, and never inside the app's own data.
+            if len(val) > 1024 or not val.startswith("/") or _CONTROL.search(val) or _INVISIBLE.search(val):
+                continue
+            real = os.path.realpath(val)
+            if real == "/" or (real + "/").startswith(os.path.realpath(DATA_DIR) + "/") or (real + "/").startswith(APP_DIR + "/"):
+                continue
+            val = real
         out[key] = val
     return out
 
@@ -990,6 +1018,171 @@ HEAR_NOTE = ("ATTACHED AUDIO: an audio clip is attached in this chat and you CAN
              "what is said in it; never say you cannot hear or play audio.")
 
 
+# A document that doesn't fit in the model's context is not cut off at the top any more.
+# It is split into passages, and for every question the passages that match it best
+# (plain word matching, done on this Mac) are the ones the model gets, with their
+# part and page numbers. Nothing is sent anywhere and nothing new is stored.
+DOC_CHUNK = 1400                  # characters per passage
+EXCERPT_CHARS = 30000             # most text taken from one long document for one question
+DOC_CACHE_CHARS = 8000000
+_PAGE_MARK = re.compile(r"--- Page (\d{1,6}) ---\Z")
+_WORD = re.compile(r"[^\W_]{2,}")
+_STOP = frozenset("""a an and are as at be but by can could did do does for from had has have he her his how i if in into is it its
+me my no not of on or our she so some than that the their them then there these they this to up us was we were what when where which
+who why will with would you your about tell say said please document file pdf page pages give show find any all also just""".split())
+_doc_cache = collections.OrderedDict()            # doc id -> {"key", "text", "index"}
+_doc_cache_lock = threading.Lock()
+
+
+def _stem(w):
+    for suf in ("ing", "ed", "es", "s"):
+        if w.endswith(suf) and len(w) - len(suf) >= 3:
+            return w[:-len(suf)]
+    return w
+
+
+def _terms(text):
+    return [_stem(w) for w in _WORD.findall(text.lower()) if w not in _STOP]
+
+
+def doc_chunks(text, size=DOC_CHUNK):
+    """[(page or None, passage)]: the text cut at line ends into passages of about `size` characters."""
+    chunks, buf, state = [], [], {"n": 0, "page": None, "start": None}
+
+    def flush():
+        body = "\n".join(buf).strip()
+        if body:
+            chunks.append((state["start"], body))
+        del buf[:]
+        state["n"] = 0
+
+    def add(piece):
+        if not buf:
+            state["start"] = state["page"]
+        buf.append(piece)
+        state["n"] += len(piece) + 1
+
+    for line in text.split("\n"):
+        if len(line) < 40:
+            m = _PAGE_MARK.match(line.strip())
+            if m:
+                if state["n"] >= size // 3:
+                    flush()
+                state["page"] = int(m.group(1))
+                continue
+        while len(line) > size:                  # one very long line: cut it at a space
+            cut = line.rfind(" ", size // 2, size)
+            cut = cut if cut > 0 else size
+            add(line[:cut])
+            flush()
+            line = line[cut:].lstrip()
+        add(line)
+        if state["n"] >= size:
+            flush()
+    flush()
+    return chunks
+
+
+def load_doc(did):
+    """The cleaned text of a stored document (kept in memory for the next question), or None."""
+    path = doc_path(did)
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = (st.st_mtime_ns, st.st_size)
+    with _doc_cache_lock:
+        hit = _doc_cache.get(did)
+        if hit and hit["key"] == key:
+            _doc_cache.move_to_end(did)
+            return hit
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = clean_untrusted(fh.read(MAX_DOC_CHARS + 1000))
+    except OSError:
+        return None
+    doc = {"key": key, "text": text, "index": None}
+    with _doc_cache_lock:
+        _doc_cache[did] = doc
+        _doc_cache.move_to_end(did)
+        while len(_doc_cache) > 1 and sum(len(d["text"]) for d in _doc_cache.values()) > DOC_CACHE_CHARS:
+            _doc_cache.popitem(last=False)
+    return doc
+
+
+def _doc_index(doc):
+    idx = doc.get("index")
+    if idx is None:
+        chunks = doc_chunks(doc["text"])
+        tfs = [collections.Counter(_terms(body)) for _page, body in chunks]
+        df = collections.Counter()
+        for tf in tfs:
+            df.update(tf.keys())
+        lens = [sum(tf.values()) or 1 for tf in tfs]
+        idx = {"chunks": chunks, "tfs": tfs, "df": df, "lens": lens, "avg": (sum(lens) / float(len(lens))) if lens else 1.0}
+        doc["index"] = idx
+    return idx
+
+
+def doc_excerpts(doc, question, budget):
+    """The parts of a long document to show the model for this question, at most `budget` characters."""
+    idx = _doc_index(doc)
+    chunks, n = idx["chunks"], len(idx["chunks"])
+    if n < 2 or budget < 2000:
+        return doc["text"][:budget] + "\n[... the rest of this document was cut off: it is longer than the context window allows]"
+    q = [t for t in dict.fromkeys(_terms(question[:4000])) if t in idx["df"]]
+    scores = [0.0] * n
+    for t in q:
+        idf = math.log(1 + (n - idx["df"][t] + 0.5) / (idx["df"][t] + 0.5))
+        for i, tf in enumerate(idx["tfs"]):
+            f = tf.get(t)
+            if f:
+                scores[i] += idf * f * 2.5 / (f + 1.5 * (0.25 + 0.75 * idx["lens"][i] / idx["avg"]))
+    ranked = sorted(range(n), key=lambda i: -scores[i])
+    picked, used = [], 0
+    if q and scores[ranked[0]] > 0:
+        limit = min(budget, EXCERPT_CHARS)
+        for i in [0] + ranked:                   # the opening passage (title, what the document is) plus the best matches
+            if i in picked or (i != 0 and scores[i] <= 0):
+                continue
+            size = len(chunks[i][1]) + 40
+            if used + size > limit:
+                if i == 0:
+                    continue
+                break
+            picked.append(i)
+            used += size
+        how = "searched it for the user's latest message and shows the best-matching parts"
+    else:
+        # Nothing specific to look for ("summarize this"): the start, samples from all through it, and the end.
+        limit = budget
+        each = sum(len(b) for _p, b in chunks) / float(n) + 40
+        k = max(3, int(limit / each))
+        head, tail = max(1, k * 35 // 100), max(1, k // 10)
+        mid = max(0, k - head - tail)
+        want = set(range(min(head, n))) | set(range(max(0, n - tail), n))
+        span = n - head - tail
+        if mid and span > 0:
+            want |= set(head + int((j + 0.5) * span / mid) for j in range(mid))
+        for i in sorted(want):
+            size = len(chunks[i][1]) + 40
+            if used + size > limit:
+                continue                    # too big to fit: skip it, the ending may still fit
+            picked.append(i)
+            used += size
+        how = "shows the beginning, samples spread through it, and the end"
+    picked.sort()
+    pages = [pg for pg, _b in chunks if pg]
+    out = ["[From the app: this document is too long to read whole (%d parts%s). The app %s, in reading order. "
+           "The parts that are not shown were NOT read. If the answer is not in these parts, say so and ask the user "
+           "for a more specific question; never guess what the rest says. When you use a part, mention its page or part number.]"
+           % (n, ", %d pages" % max(pages) if pages else "", how)]
+    for i in picked:
+        pg, body = chunks[i]
+        out.append("[Part %d of %d%s]\n%s" % (i + 1, n, ", page %d" % pg if pg else "", body))
+    return "\n\n".join(out)
+
+
 def attach_media(messages, model_id, settings):
     """Messages from the page carry attachment ids: "audio", "imgs" and
     "docs". Audio and photos travel to Ollama in its "images" field (Gemma
@@ -1002,6 +1195,9 @@ def attach_media(messages, model_id, settings):
     total_docs = sum(len(m.get("docs") or []) for m in messages if isinstance(m, dict))
     per_doc = int(effective_ctx(settings, model_id) * 3.2 * 0.6 / max(1, total_docs))
     out, had_files, heard = [], False, False
+    asks = [m.get("content") or "" for m in messages if isinstance(m, dict) and m.get("role") == "user" and isinstance(m.get("content"), str)]
+    # What a long document is searched for: the latest message first, then a little of the one before it.
+    question = (asks[-1][:3000] if asks else "") + "\n" + (asks[-2][:800] if len(asks) > 1 else "")
     cache, budget = {}, [MAX_MEDIA_PER_REQUEST]   # each file is read once; the total is capped
 
     def b64(path):
@@ -1047,18 +1243,17 @@ def attach_media(messages, model_id, settings):
                     media.append(data)
                 elif data == "":
                     notes.append("[A photo was left out: too many attachments in one request.]")
-        for d in (m.pop("docs", None) or [])[:20]:
+        for d in (m.pop("docs", None) or [])[:40]:
             did = str(d.get("id") if isinstance(d, dict) else d)
             name = str(d.get("name") if isinstance(d, dict) else "document")[:120]
-            if MEDIA_ID.match(did) and os.path.exists(doc_path(did)):
-                try:
-                    with open(doc_path(did), encoding="utf-8", errors="replace") as fh:
-                        text = clean_untrusted(fh.read(MAX_DOC_CHARS + 1000))
-                except OSError:
+            if MEDIA_ID.match(did):
+                doc = load_doc(did)
+                if doc is None:
                     notes.append("[A document attached here is no longer available.]")
                     continue
+                text = doc["text"]
                 if len(text) > per_doc:
-                    text = text[:per_doc] + "\n[... the rest of this document was cut off: it is longer than the context window allows]"
+                    text = doc_excerpts(doc, question, per_doc)
                 safe_name = re.sub(r'[<>"\\]', "", clean_untrusted(name))
                 prefix.append("<document name=\"%s\">\n%s\n</document>" % (safe_name, text))
         if media:
@@ -1081,11 +1276,11 @@ def attach_media(messages, model_id, settings):
     return out
 
 
-def thread_media(tid, strict=False):
+def thread_media(tid, strict=False, path=None):
     """[(kind, id)] for every attachment saved in a thread (None if strict
     and the file can't be read)."""
     try:
-        with open(thread_path(tid)) as fh:
+        with open(path or thread_path(tid)) as fh:
             t = json.load(fh)
     except Exception:
         return None if strict else []
@@ -1117,6 +1312,23 @@ def media_in_use(skip_tid=None):
             if found is None:
                 return None
             used.update(mid for _kind, mid in found)
+    try:                                   # chats in "Recently deleted" keep their files until they are purged
+        trashed = os.listdir(TRASH_DIR)
+    except FileNotFoundError:
+        trashed = []
+    except OSError:
+        return None
+    for name in trashed:
+        if name.endswith(".json"):
+            found = thread_media(None, strict=True, path=os.path.join(TRASH_DIR, name))
+            if found is None:
+                return None
+            used.update(mid for _kind, mid in found)
+    try:                                   # documents attached to a project
+        for pj in load_settings().get("projects") or []:
+            used.update(f["id"] for f in pj.get("files") or [])
+    except Exception:
+        return None
     return used
 
 
@@ -1130,6 +1342,7 @@ def sweep_media(min_age=3 * 86400):
         used = media_in_use()
         if used is None:
             return 0
+        used |= private_ids()              # an open private chat's files are in use too
         now = time.time()
         for folder, ext in ((AUDIO_DIR, ".wav"), (IMAGE_DIR, ".jpg"), (DOC_DIR, ".txt")):
             try:
@@ -1153,6 +1366,22 @@ def delete_thread(tid, by_user=True):
     """Remove a chat and the attachments only it used. Call with _lock held.
     A chat the user deleted is refused on later autosaves (410); a chat the
     hourly auto-delete removed may simply be re-saved if the page still has it open."""
+    if by_user:
+        # Deleted by hand: the chat goes to "Recently deleted" for 30 days (its files stay with it).
+        try:
+            with open(thread_path(tid)) as fh:
+                t = json.load(fh)
+        except Exception:
+            t = None
+        if isinstance(t, dict) and isinstance(t.get("messages"), list) and t["messages"]:
+            t["id"], t["deletedAt"] = tid, time.time()
+            try:
+                atomic_write(trash_path(tid), t)
+                _rm(thread_path(tid))
+                _deleted.add(tid)
+                return
+            except OSError:
+                pass                       # no room for the copy: delete for good, as asked
     in_use = media_in_use(tid)
     for kind, mid in thread_media(tid):
         if in_use is not None and mid not in in_use:
@@ -1160,6 +1389,142 @@ def delete_thread(tid, by_user=True):
     _rm(thread_path(tid))
     if by_user:
         _deleted.add(tid)
+
+
+def trash_path(tid):
+    return os.path.join(TRASH_DIR, tid + ".json")
+
+
+def list_trash():
+    out = []
+    try:
+        names = os.listdir(TRASH_DIR)
+    except OSError:
+        return out
+    now = time.time()
+    for name in names:
+        tid = name[:-5]
+        if not name.endswith(".json") or not THREAD_ID.match(tid):
+            continue
+        try:
+            with open(os.path.join(TRASH_DIR, name)) as fh:
+                t = json.load(fh)
+            when = _num(t.get("deletedAt")) or os.path.getmtime(os.path.join(TRASH_DIR, name))
+            out.append({"id": tid, "title": str(t.get("title") or "New chat")[:200],
+                        "count": len(t["messages"]) if isinstance(t.get("messages"), list) else 0,
+                        "deleted": when * 1000,
+                        "days_left": max(0, int(TRASH_DAYS - (now - when) / 86400 + 0.999))})
+        except Exception:
+            out.append({"id": tid, "title": "(damaged chat)", "count": 0, "deleted": 0, "days_left": 0})
+    out.sort(key=lambda r: r["deleted"], reverse=True)
+    return out
+
+
+def restore_trash(tid):
+    """Put a deleted chat back in the list. Returns False if it isn't in the trash."""
+    with _lock:
+        try:
+            with open(trash_path(tid)) as fh:
+                t = json.load(fh)
+        except Exception:
+            return False
+        if not isinstance(t, dict) or not isinstance(t.get("messages"), list):
+            return False
+        if os.path.exists(thread_path(tid)):
+            raise RuntimeError("A chat with the same id is already in your list.")
+        t.pop("deletedAt", None)
+        t["id"] = tid
+        t["updated"] = time.time() * 1000       # back today, so "Delete old chats" doesn't take it straight away
+        atomic_write(thread_path(tid), t)
+        _rm(trash_path(tid))
+        _deleted.discard(tid)
+    return True
+
+
+def purge_trash(tid=None, older_than=None):
+    """Delete chats in the trash for good, with the attachments nothing else uses.
+    tid = just that one; older_than = seconds in the trash; neither = everything."""
+    gone = 0
+    with _lock:
+        try:
+            names = os.listdir(TRASH_DIR)
+        except OSError:
+            return 0
+        now, media = time.time(), []
+        for name in names:
+            one = name[:-5]
+            if not name.endswith(".json") or not THREAD_ID.match(one) or (tid is not None and one != tid):
+                continue
+            path = os.path.join(TRASH_DIR, name)
+            if older_than is not None:
+                try:
+                    with open(path) as fh:
+                        when = _num(json.load(fh).get("deletedAt"))
+                except Exception:
+                    when = 0
+                try:
+                    when = when or os.path.getmtime(path)
+                except OSError:
+                    continue
+                if now - when < older_than:
+                    continue
+            media += thread_media(None, path=path)
+            _rm(path)
+            gone += 1
+        if media:
+            in_use = media_in_use()
+            if in_use is not None:
+                for kind, mid in media:
+                    if mid not in in_use:
+                        _rm(media_file(kind, mid))
+    return gone
+
+
+# Private chats are never saved, but the files sent in one (photos, documents,
+# clips, pictures made) are on disk while it is open. The page names them here
+# as they appear; they are deleted when the private chat ends, and at the next
+# start if the app was quit or crashed first.
+PRIVATE_FILE = os.path.join(DATA_DIR, "private.ids")
+
+
+def private_ids():
+    """Files that belong to the private chat that is open now (or was open at a crash)."""
+    try:
+        with open(PRIVATE_FILE) as fh:
+            return {line.strip() for line in fh.read(200000).split("\n") if MEDIA_ID.match(line.strip())}
+    except OSError:
+        return set()
+
+
+def private_note(ids):
+    ids = [i for i in ids if isinstance(i, str) and MEDIA_ID.match(i)][:500]
+    if not ids:
+        return
+    os.makedirs(DATA_DIR, exist_ok=True)
+    fd = os.open(PRIVATE_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write("".join(i + "\n" for i in ids))
+
+
+def private_end():
+    """Delete every file a private chat left, unless a saved chat or project also uses it."""
+    with _lock:
+        try:
+            with open(PRIVATE_FILE) as fh:
+                ids = {line.strip() for line in fh.read(200000).split("\n") if MEDIA_ID.match(line.strip())}
+        except OSError:
+            return 0
+        in_use = media_in_use()
+        if in_use is None:
+            return 0                       # can't tell what is shared: try again next time
+        n = 0
+        for mid in ids - in_use:
+            for path in (audio_path(mid), image_path(mid), doc_path(mid)):
+                if os.path.lexists(path):
+                    _rm(path)
+                    n += 1
+        _rm(PRIVATE_FILE)
+        return n
 
 
 def auto_delete():
@@ -1202,6 +1567,10 @@ def _sweeper():
             n = auto_delete()
             if n:
                 print("auto-deleted %d old chat(s)" % n, flush=True)
+            n = purge_trash(older_than=TRASH_DAYS * 86400)
+            if n:
+                print("emptied %d chat(s) from Recently deleted" % n, flush=True)
+            auto_backup_tick()
             if rounds % 12 == 0:
                 n = sweep_media()
                 if n:
@@ -1233,6 +1602,8 @@ def storage_report():
                       ("audio", AUDIO_DIR), ("images", IMAGE_DIR), ("docs", DOC_DIR)):
         size, count = dir_size(path)
         out[key] = {"bytes": size, "count": count}
+    size, count = dir_size(TRASH_DIR)
+    out["trash"] = {"bytes": size, "count": count}
     logs = [f for f in os.listdir(DATA_DIR) if f.endswith(".log")] if os.path.isdir(DATA_DIR) else []
     old_logs = [f for f in logs if f.endswith(".prev.log")]
     out["logs"] = {"bytes": sum(os.path.getsize(os.path.join(DATA_DIR, f)) for f in logs), "count": len(logs),
@@ -1240,6 +1611,7 @@ def storage_report():
     used = media_in_use()
     unused_b, unused_n = 0, 0
     if used is not None:
+        used |= private_ids()
         hour_ago = time.time() - 3600       # newer files may belong to a message still being written
         for folder, ext in ((AUDIO_DIR, ".wav"), (IMAGE_DIR, ".jpg"), (DOC_DIR, ".txt")):
             for name in (os.listdir(folder) if os.path.isdir(folder) else []):
@@ -1344,12 +1716,16 @@ _BK_EXT = {"audio": "wav", "images": "jpg", "docs": "txt"}
 
 def make_backup(path):
     """One zip with settings, every chat and every attachment (not the models)."""
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+    # strict_timestamps off: a file dated before 1980 is stored as 1980 instead of stopping the backup
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as z:
         z.writestr("manifest.json", json.dumps({"app": "Local AI", "version": 1, "created": time.time()}))
         z.writestr("settings.json", json.dumps(load_settings(), indent=2))
+        secret = private_ids()             # a private chat's files never go into a backup
         for folder, arc in ((THREADS_DIR, "threads"), (AUDIO_DIR, "media/audio"), (IMAGE_DIR, "media/images"), (DOC_DIR, "media/docs")):
             for name in (sorted(os.listdir(folder)) if os.path.isdir(folder) else []):
                 full = os.path.join(folder, name)
+                if arc != "threads" and name[:16] in secret:
+                    continue
                 if os.path.isfile(full) and not os.path.islink(full) and not name.endswith(".tmp"):
                     try:
                         z.write(full, arc + "/" + name,
@@ -1517,6 +1893,8 @@ def restore_backup(path):
                 if isinstance(raw, dict):
                     raw.pop("model", None)
                     raw.pop("think", None)
+                    raw.pop("backup_dir", None)        # where backups go is decided on this Mac, never by a backup file
+                    raw.pop("auto_backup", None)
                     save_settings(raw)
                     got["settings"] = True
     return got
@@ -1526,6 +1904,40 @@ def media_file(kind, mid):
     return {"audio": audio_path, "image": image_path, "doc": doc_path}[kind](mid)
 
 
+# Search keeps each chat's text in memory after reading it once, and re-reads a chat
+# only when its file has changed. Nothing is written to disk for this.
+_search_cache = {}                # file name -> {"key", "id", "title", "updated", "model", "top", "texts", "lows", "size"}
+_search_lock = threading.Lock()
+SEARCH_CACHE_CHARS = 60000000
+
+
+def _search_entry(name):
+    path = os.path.join(THREADS_DIR, name)
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = (st.st_mtime_ns, st.st_size)
+    hit = _search_cache.get(name)
+    if hit and hit["key"] == key:
+        return hit
+    try:
+        with open(path) as fh:
+            t = json.load(fh)
+    except Exception:
+        return None
+    if not isinstance(t, dict):
+        return None
+    texts = [m["content"] for m in (t.get("messages") if isinstance(t.get("messages"), list) else [])
+             if isinstance(m, dict) and isinstance(m.get("content"), str)]
+    entry = {"key": key, "id": str(t.get("id") or name[:-5]), "title": str(t.get("title") or "New chat"),
+             "updated": _num(t.get("updated")), "model": t.get("model"), "top": t.get("top") is True,
+             "texts": texts, "lows": [x.lower() for x in texts], "size": sum(len(x) for x in texts)}
+    if sum(e["size"] for e in _search_cache.values()) + entry["size"] <= SEARCH_CACHE_CHARS:
+        _search_cache[name] = entry
+    return entry
+
+
 def search_threads(q, limit=40):
     """Find chats whose title or messages contain q (case-insensitive)."""
     q = q.strip().lower()
@@ -1533,36 +1945,28 @@ def search_threads(q, limit=40):
     if len(q) < 2:
         return out
     try:
-        names = os.listdir(THREADS_DIR)
+        names = [n for n in os.listdir(THREADS_DIR) if n.endswith(".json")]
     except OSError:
         return out
-    for name in names:
-        if not name.endswith(".json"):
-            continue
-        try:
-            with open(os.path.join(THREADS_DIR, name)) as fh:
-                t = json.load(fh)
-        except Exception:
-            continue
-        if not isinstance(t, dict):
-            continue
-        title = str(t.get("title") or "New chat")
-        count, snippet = 0, ""
-        for m in (t.get("messages") if isinstance(t.get("messages"), list) else []):
-            if not isinstance(m, dict) or not isinstance(m.get("content"), str):
+    with _search_lock:
+        for gone in set(_search_cache) - set(names):
+            del _search_cache[gone]
+        for name in names:
+            e = _search_entry(name)
+            if e is None:
                 continue
-            text = m["content"]
-            low = text.lower()
-            k = low.find(q)
-            if k < 0:
-                continue
-            count += low.count(q)
-            if not snippet:
-                a, b = max(0, k - 60), min(len(text), k + len(q) + 80)
-                snippet = ("…" if a else "") + " ".join(text[a:b].split()) + ("…" if b < len(text) else "")
-        if count or q in title.lower():
-            out.append({"id": str(t.get("id") or name[:-5]), "title": title, "updated": _num(t.get("updated")),
-                        "count": count, "snippet": snippet, "model": t.get("model"), "top": t.get("top") is True})
+            count, snippet = 0, ""
+            for text, low in zip(e["texts"], e["lows"]):
+                k = low.find(q)
+                if k < 0:
+                    continue
+                count += low.count(q)
+                if not snippet:
+                    a, b = max(0, k - 60), min(len(text), k + len(q) + 80)
+                    snippet = ("…" if a else "") + " ".join(text[a:b].split()) + ("…" if b < len(text) else "")
+            if count or q in e["title"].lower():
+                out.append({"id": e["id"], "title": e["title"], "updated": e["updated"],
+                            "count": count, "snippet": snippet, "model": e["model"], "top": e["top"]})
     out.sort(key=lambda r: (r["count"] == 0, -r["updated"]))
     return out[:limit]
 
@@ -1573,6 +1977,413 @@ def safe_filename(name):
     name = name.replace("\\", "/").rsplit("/", 1)[-1].strip()
     name = re.sub(r'[<>"&\x00-\x1f]', "", name).strip()
     return name[:120] or "file"
+
+
+
+# ---------------------------------------------------------------- models: delete, long recordings
+_transcribe_lock = threading.Lock()
+MAX_LONG_AUDIO = 3 * 3600         # seconds: the longest recording that is written out as text
+TRANSCRIBE_CHUNK = 60             # seconds of audio the model hears at a time (short slices keep it from losing its place)
+# Kept this short on purpose: offered a "[no speech]" way out, the model took it for slices full of talking (tested Nov 14, 2026).
+TRANSCRIBE_PROMPT = "Transcribe this audio word for word. Output only the transcript."
+
+
+def _trim_loop(text):
+    """A model that loses its place repeats one sentence until it runs out of room.
+    Keep one copy of a sentence repeated at the very end and say so."""
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    while len(parts) > 1 and len(parts[-1]) < len(parts[-2]) and parts[-2].startswith(parts[-1]):
+        parts.pop()                              # the cut-off last copy
+    n = 1
+    while n < len(parts) and parts[-1 - n].strip().lower() == parts[-1].strip().lower():
+        n += 1
+    if n >= 3:
+        parts = parts[:len(parts) - n + 1]
+    return " ".join(parts) + " [the model lost its place here; some words up to the next time mark may be missing]"
+
+
+def ollama_delete(name):
+    req = urllib.request.Request(OLLAMA_URL + "/api/delete", data=json.dumps({"model": name}).encode("utf-8"),
+                                 method="DELETE", headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        resp.read(65536)
+        return resp.status
+
+
+def delete_model(mid):
+    """Remove a downloaded model's files (it can be downloaded again any time)."""
+    if _state["warming"] or _imagine_lock.locked() or _transcribe_lock.locked():
+        raise RuntimeError("The app is busy with a model right now. Try again in a moment.")
+    installed = installed_models()
+    if installed is None:
+        raise RuntimeError("The model server isn't answering.")
+    names = [n for n in installed if _matches(n, mid)]
+    if not names:
+        raise RuntimeError("That model isn't downloaded.")
+    try:
+        ollama_post("/api/generate", {"model": mid, "keep_alive": 0}, timeout=60).read()
+    except Exception:
+        pass
+    try:
+        for n in names:
+            ollama_delete(n)
+    except Exception as exc:
+        raise RuntimeError("The model server couldn't delete it: %s" % friendly_error(exc))
+    finally:
+        _info_cache.pop(mid, None)
+        forget_health()
+
+
+def ear_model():
+    """The first downloaded model that can listen to audio, or None."""
+    installed = installed_models() or []
+    for m in MODELS:
+        if any(_matches(n, m["id"]) for n in installed):
+            info = model_info(m["id"])
+            if info and info.get("audio"):
+                return m["id"]
+    return None
+
+
+# ---------------------------------------------------------------- backups to a folder, with a password
+# Settings > Privacy: a backup is copied into a folder you pick, by hand or every day / week.
+# With a password set, the file is encrypted (AES-256) and sealed, so it is useless without
+# the password. What is kept on this Mac is a key made from the password, never the password.
+BACKUP_KEY_FILE = os.path.join(DATA_DIR, "backup.key")
+BACKUP_STATE_FILE = os.path.join(DATA_DIR, "backup-state.json")
+BACKUP_KEEP = 7
+BK_MAGIC = b"LOCALAIBK1"
+BK_ITER = 600000
+OPENSSL = "/usr/bin/openssl"
+_BK_NAME = re.compile(r"Local AI backup \d{4}-\d\d-\d\d \d{4}\.(zip|localaibackup)\Z")
+_backup_lock = threading.Lock()
+
+
+class BackupPassword(Exception):
+    pass
+
+
+def _derive(password, salt):
+    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, BK_ITER, 64)
+
+
+def set_backup_password(password):
+    if not password:
+        _rm(BACKUP_KEY_FILE)
+        return False
+    salt = secrets.token_bytes(16)
+    atomic_write(BACKUP_KEY_FILE, {"salt": salt.hex(), "key": _derive(password, salt).hex()})   # mkstemp: only you can read it
+    return True
+
+
+def backup_key():
+    try:
+        with open(BACKUP_KEY_FILE) as fh:
+            j = json.load(fh)
+        salt, key = bytes.fromhex(j["salt"]), bytes.fromhex(j["key"])
+        return (salt, key) if len(salt) == 16 and len(key) == 64 else None
+    except Exception:
+        return None
+
+
+def _openssl(args, secret):
+    try:
+        r = subprocess.run([OPENSSL, "enc", "-aes-256-cbc", "-pbkdf2", "-iter", "1000", "-md", "sha256"] + args + ["-pass", "stdin"],
+                           input=secret.hex().encode("ascii") + b"\n", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=3600, env={"PATH": "/usr/bin:/bin"})
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def encrypt_backup(src, dst, salt, key):
+    ct = dst + ".ct"
+    try:
+        if not _openssl(["-salt", "-in", src, "-out", ct], key[:32]):
+            raise RuntimeError("Couldn't lock the backup with your password.")
+        mac = hmac.new(key[32:], digestmod=hashlib.sha256)
+        with open(ct, "rb") as fi, open(dst, "wb") as fo:
+            head = BK_MAGIC + salt
+            fo.write(head)
+            mac.update(head)
+            while True:
+                chunk = fi.read(1 << 20)
+                if not chunk:
+                    break
+                mac.update(chunk)
+                fo.write(chunk)
+            fo.write(mac.digest())
+            fo.flush()
+            os.fsync(fo.fileno())
+    finally:
+        _rm(ct)
+
+
+def decrypt_backup(src, dst, password):
+    """Check the seal first (wrong password or a changed file stops here), then unlock."""
+    head_len = len(BK_MAGIC) + 16
+    size = os.path.getsize(src)
+    if size < head_len + 64:
+        raise ValueError("That backup file is damaged.")
+    ct = dst + ".ct"
+    try:
+        with open(src, "rb") as fi:
+            head = fi.read(head_len)
+            salt = head[len(BK_MAGIC):]
+            if password:
+                key = _derive(password, salt)
+            else:
+                stored = backup_key()
+                if not stored or stored[0] != salt:
+                    raise BackupPassword("This backup is locked with a password. Type it to restore.")
+                key = stored[1]
+            mac = hmac.new(key[32:], digestmod=hashlib.sha256)
+            mac.update(head)
+            left = size - head_len - 32
+            with open(ct, "wb") as fo:
+                while left > 0:
+                    chunk = fi.read(min(left, 1 << 20))
+                    if not chunk:
+                        raise ValueError("That backup file is damaged.")
+                    mac.update(chunk)
+                    fo.write(chunk)
+                    left -= len(chunk)
+            tag = fi.read(32)
+        if not hmac.compare_digest(mac.digest(), tag):
+            raise BackupPassword("Wrong password, or the backup file was changed." if password
+                                 else "This backup was made with a different password. Type it to restore.")
+        if not _openssl(["-d", "-in", ct, "-out", dst], key[:32]):
+            raise ValueError("That backup file is damaged.")
+    finally:
+        _rm(ct)
+
+
+def backup_state():
+    try:
+        with open(BACKUP_STATE_FILE) as fh:
+            j = json.load(fh)
+        return j if isinstance(j, dict) else {}
+    except Exception:
+        return {}
+
+
+def backup_status():
+    s, st = load_settings(), backup_state()
+    folder = s["backup_dir"]
+    files = []
+    if folder:
+        try:
+            files = sorted(n for n in os.listdir(folder) if _BK_NAME.match(n))
+        except OSError:
+            pass
+    return {"dir": folder, "auto": s["auto_backup"], "has_password": backup_key() is not None,
+            "dir_ok": bool(folder) and os.path.isdir(folder),
+            "last_ok": _num(st.get("last_ok")), "last_file": str(st.get("file") or "")[:200],
+            "error": str(st.get("error") or "")[:300], "error_at": _num(st.get("error_at")),
+            "count": len(files), "keep": BACKUP_KEEP}
+
+
+def backup_to_folder():
+    """Build a backup and put it in the chosen folder; keep the newest few. Returns the file name."""
+    if not _backup_lock.acquire(blocking=False):
+        raise RuntimeError("A backup is already being made.")
+    tmp = None
+    try:
+        folder = load_settings()["backup_dir"]
+        if not folder:
+            raise RuntimeError("Pick a backup folder first.")
+        if not os.path.isdir(folder):
+            raise RuntimeError("The backup folder isn't there right now. Is the drive plugged in?")
+        tmp = scratch("localai-folderbk-")
+        zpath = os.path.join(tmp, "backup.zip")
+        make_backup(zpath)
+        key = backup_key()
+        if key is None and os.path.lexists(BACKUP_KEY_FILE):
+            raise RuntimeError("The saved backup password can't be read, so no backup was made. Set the password again in Settings.")
+        out, ext = zpath, "zip"
+        if key:
+            out, ext = os.path.join(tmp, "backup.locked"), "localaibackup"
+            encrypt_backup(zpath, out, key[0], key[1])
+            _rm(zpath)
+        if shutil.disk_usage(folder).free < os.path.getsize(out) + (50 << 20):
+            raise RuntimeError("There isn't enough free space in the backup folder.")
+        name = "Local AI backup %s.%s" % (time.strftime("%Y-%m-%d %H%M"), ext)
+        part = os.path.join(folder, "." + name + ".part")
+        try:
+            shutil.copyfile(out, part)
+            os.replace(part, os.path.join(folder, name))
+        except OSError as exc:
+            _rm(part)
+            raise RuntimeError("Couldn't write to the backup folder: %s" % friendly_error(exc))
+        old = sorted(n for n in os.listdir(folder) if _BK_NAME.match(n))
+        for n in old[:-BACKUP_KEEP]:
+            _rm(os.path.join(folder, n))
+        atomic_write(BACKUP_STATE_FILE, {"last_ok": time.time(), "file": name, "error": "", "error_at": 0})
+        return name
+    except Exception as exc:
+        st = backup_state()
+        st.update({"error": str(exc)[:300], "error_at": time.time()})
+        try:
+            atomic_write(BACKUP_STATE_FILE, st)
+        except Exception:
+            pass
+        raise
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+        _backup_lock.release()
+
+
+def auto_backup_tick():
+    """Called every hour: make the daily / weekly backup when it is due."""
+    try:
+        s = load_settings()
+    except Exception:
+        return
+    every = {"daily": 20 * 3600, "weekly": 6.5 * 86400}.get(s["auto_backup"])
+    if not every or not s["backup_dir"]:
+        return
+    if time.time() - _num(backup_state().get("last_ok")) < every:
+        return
+    try:
+        print("automatic backup saved: %s" % backup_to_folder(), flush=True)
+    except Exception as exc:
+        print("automatic backup failed: %s" % exc, flush=True)
+
+
+# ---------------------------------------------------------------- "Check my app"
+_check_lock = threading.Lock()
+
+
+def _tiny_png():
+    raw = b"".join(b"\x00" + b"\xff\x80\x40" * 8 for _ in range(8))
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 8, 8, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+
+def self_check():
+    """Try each part of the app with a harmless test and say in plain words what works."""
+    out = []
+
+    def add(name, ok, detail, warn=False):
+        out.append({"name": name, "ok": bool(ok), "warn": bool(warn and not ok), "detail": detail})
+
+    if not _check_lock.acquire(blocking=False):
+        raise RuntimeError("A check is already running.")
+    try:
+        tmp = scratch("localai-check-")
+    except OSError:
+        _check_lock.release()
+        raise RuntimeError("Couldn't make a work folder. Is the disk full?")
+    try:
+        installed, _loaded = ollama_state()
+        add("Model server", installed is not None,
+            "Running." if installed is not None else "Not answering. Use Restart in the heat menu (top bar), or quit and reopen the app.")
+        for m in MODELS:
+            is_in = bool(installed) and any(_matches(n, m["id"]) for n in installed)
+            add(m["label"], is_in, "Downloaded." if is_in else "Not downloaded. Pick it in the model menu to download it.", warn=True)
+        try:
+            r = run_sandboxed(["/usr/bin/true"], tmp, timeout=20, max_bytes=1 << 16)
+            add("Sealed box for reading files", r.returncode == 0, "Working." if r.returncode == 0 else "It did not start, so files can't be read safely. Restart the Mac; if it stays, rebuild the app.")
+        except Exception as exc:
+            add("Sealed box for reading files", False, "It did not start: %s" % friendly_error(exc))
+        try:
+            page = os.path.join(tmp, "check.html")
+            with open(page, "w") as fh:
+                fh.write("<html><body><p>Local AI self check visible words</p><p style=\"display:none\">buriedword</p></body></html>")
+            r = run_sandboxed([PDFTEXT, "--rich", page], tmp, timeout=60)
+            text = str(json.loads(r.stdout.decode("utf-8", "replace")).get("text") or "") if r.returncode == 0 else ""
+            ok = "self check visible" in text and "buriedword" not in text
+            add("Document reader", ok, "Reads documents and drops hidden text." if ok else
+                ("It read the test page but did not drop its hidden text." if "self check visible" in text else "It could not read a test page. Rebuild the app."))
+        except Exception as exc:
+            add("Document reader", False, "It could not run: %s" % friendly_error(exc))
+        ok = os.access(RUN_PYTHON, os.X_OK) and os.path.isfile(DOC_CLEAN)
+        add("Hidden-text check for Word files", ok, "Ready." if ok else "Missing, so Word, RTF and ODT files are refused. Install Apple's Command Line Tools (run: xcode-select --install).", warn=True)
+        try:
+            src, dst = os.path.join(tmp, "c.png"), os.path.join(tmp, "c.jpg")
+            with open(src, "wb") as fh:
+                fh.write(_tiny_png())
+            r = run_sandboxed(["/usr/bin/sips", "-s", "format", "jpeg", src, "--out", dst], tmp, timeout=60, max_bytes=1 << 20)
+            ok = r.returncode == 0 and _regular_file(dst)
+            add("Photo reader", ok, "Working." if ok else "It could not convert a test picture.")
+        except Exception as exc:
+            add("Photo reader", False, "It could not run: %s" % friendly_error(exc))
+        try:
+            src, dst = os.path.join(tmp, "c-in.wav"), os.path.join(tmp, "c-out.wav")
+            with wave.open(src, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(8000)
+                w.writeframes(b"\x00\x00" * 8000)
+            r = run_sandboxed(["/usr/bin/afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", src, dst], tmp, timeout=60, max_bytes=1 << 20)
+            ok = r.returncode == 0 and _regular_file(dst)
+            add("Audio reader", ok, "Working." if ok else "It could not convert a test clip.")
+        except Exception as exc:
+            add("Audio reader", False, "It could not run: %s" % friendly_error(exc))
+        try:
+            res = run_code("print(6 * 7)", seconds=30)
+            ok = res.get("ok") and "42" in (res.get("output") or "")
+            add("Code runner", ok, ("Working, with the extra libraries." if runner_python()[2] else "Working (standard Python only).") if ok
+                else "It could not run a one-line test program.", warn=True)
+        except Exception as exc:
+            add("Code runner", False, str(exc)[:200], warn=True)
+        add("Picture maker", imagegen_ready(), "Installed." if imagegen_ready() else "Not installed (optional).", warn=True)
+        try:
+            probe = os.path.join(DATA_DIR, ".check-%s" % secrets.token_hex(4))
+            with open(probe, "w") as fh:
+                fh.write("ok")
+            os.remove(probe)
+            add("Data folder", True, "Can be written to.")
+        except OSError as exc:
+            add("Data folder", False, "Can't be written to: %s. Chats won't be saved." % friendly_error(exc))
+        try:
+            with open(SETTINGS_FILE) as fh:
+                ok = isinstance(json.load(fh), dict)
+            add("Settings file", ok, "Readable." if ok else "Damaged. The app will start it fresh and keep a copy.")
+        except FileNotFoundError:
+            add("Settings file", True, "Not made yet (it appears with your first change).")
+        except Exception:
+            add("Settings file", False, "Damaged or unreadable. The app keeps a copy and starts it fresh at the next launch.")
+        good = bad = 0
+        try:
+            for name in os.listdir(THREADS_DIR):
+                if name.endswith(".json"):
+                    try:
+                        with open(os.path.join(THREADS_DIR, name)) as fh:
+                            t = json.load(fh)
+                        if not isinstance(t, dict) or not isinstance(t.get("messages"), list):
+                            raise ValueError
+                        good += 1
+                    except Exception:
+                        bad += 1
+        except OSError:
+            pass
+        add("Saved chats", bad == 0, "%d chat%s, all readable." % (good, "" if good == 1 else "s") if bad == 0
+            else "%d of %d chat files are damaged and can't be opened. Restoring a backup brings them back." % (bad, good + bad))
+        try:
+            free = shutil.disk_usage(DATA_DIR).free
+            add("Free disk space", free >= (5 << 30), "%.1f GB free." % (free / 1e9) if free >= (5 << 30)
+                else "Only %.1f GB free. Models and pictures need room; free some space." % (free / 1e9), warn=free >= (1 << 30))
+        except OSError:
+            pass
+        st = backup_status()
+        if st["auto"] != "off":
+            late = time.time() - st["last_ok"] > {"daily": 2 * 86400, "weekly": 9 * 86400}[st["auto"]]
+            if st["error"] and st["error_at"] > st["last_ok"]:
+                add("Automatic backups", False, "The last try failed: %s" % st["error"], warn=True)
+            elif not st["last_ok"]:
+                add("Automatic backups", True, "On. The first backup is made within the hour.")
+            else:
+                add("Automatic backups", not late, "Last backup: %s." % time.strftime("%b %d, %H:%M", time.localtime(st["last_ok"])) if not late
+                    else "No backup since %s. Is the backup drive plugged in?" % time.strftime("%b %d", time.localtime(st["last_ok"])), warn=True)
+        else:
+            add("Automatic backups", True, "Off. Turn them on in Settings, Privacy & storage.")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        _check_lock.release()
+    return out
 
 
 # ------------------------------------------------------------- small apps
@@ -2535,6 +3346,14 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return src, name, ext
 
+    def _note_private(self, mid):
+        """Uploads from a private chat say so; the file is then erased when that chat ends."""
+        if self.headers.get("X-Private") == "1":
+            try:
+                private_note([mid])
+            except OSError:
+                pass
+
     def _upload_image(self):
         """Any image macOS can open (HEIC, PNG, JPEG, GIF, TIFF, WebP...) ->
         JPEG, longest side 1280 px, using the built-in sips tool."""
@@ -2565,6 +3384,7 @@ class Handler(BaseHTTPRequestHandler):
             if r.returncode != 0 or not _regular_file(work) or os.path.getsize(work) == 0:
                 return self._json(415, {"error": "Couldn't open that file as an image."})
             shutil.move(work, dst)
+            self._note_private(iid)
             return self._json(200, {"id": iid, "name": name})
         except subprocess.TimeoutExpired:
             _rm(dst)
@@ -2603,7 +3423,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json(415, {"error": "Couldn't check that document for hidden text, so it wasn't read. Save it as a PDF and try again."})
                     src = cleaned
                 cmd = [PDFTEXT, src] if ext == "pdf" else [PDFTEXT, "--rich", src]
-                r = run_sandboxed(cmd, tmp, timeout=600)
+                r = run_sandboxed(cmd, tmp, timeout=1800)
                 if r.too_big:
                     return self._json(413, {"error": "That file needed too much memory to open safely, so it was stopped."})
                 if r.returncode == 3:
@@ -2642,6 +3462,7 @@ class Handler(BaseHTTPRequestHandler):
             os.makedirs(DOC_DIR, exist_ok=True)
             did = secrets.token_hex(8)
             atomic_write(doc_path(did), None, text=text)
+            self._note_private(did)
             return self._json(200, {"id": did, "name": name, "pages": info["pages"], "read": info["read"],
                                     "words": len(text.split()),
                                     "tokens": int(len(text) / 3.5), "cut": cut, "ocr": info["ocr"],
@@ -2690,7 +3511,7 @@ class Handler(BaseHTTPRequestHandler):
             if r.too_big:
                 return self._json(413, {"error": "That file needed too much memory to open safely, so it was stopped."})
             if r.returncode == -SIGXFSZ:
-                return self._json(400, {"error": "That clip is over 10 minutes long. Trim it and try again."})
+                return self._json(400, {"error": "That clip is over 10 minutes long. Trim it and try again.", "long": True})
             if r.returncode != 0 or not _regular_file(work):
                 return self._json(415, {"error": "Couldn't read that file as audio. Try .m4a, .mp3, .wav or .aiff."})
             shutil.move(work, dst)
@@ -2700,13 +3521,152 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(400, {"error": "That clip is too short or silent."})
             if seconds > MAX_AUDIO_SECONDS:
                 os.remove(dst)
-                return self._json(400, {"error": "That clip is %d minutes long. The limit is 10 minutes; trim it and try again." % round(seconds / 60)})
+                return self._json(400, {"error": "That clip is %d minutes long. The limit is 10 minutes; trim it and try again." % round(seconds / 60), "long": True})
+            self._note_private(aid)
             return self._json(200, {"id": aid, "name": name, "seconds": round(seconds, 1)})
         except subprocess.TimeoutExpired:
             _rm(dst)
             return self._json(500, {"error": "Converting the audio took too long."})
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    def _transcribe(self):
+        """A recording too long to attach (over 10 minutes, up to 3 hours): converted like
+        any clip, then written out as text a few minutes at a time by the model that can
+        hear, and kept as a document. Progress goes back to the page line by line."""
+        if not _transcribe_lock.acquire(blocking=False):
+            return self._json(503, {"error": "Another recording is still being written out. Wait for it to finish."})
+        try:
+            tmp = scratch("localai-long-")
+        except OSError:
+            _transcribe_lock.release()
+            return self._json(500, {"error": "Couldn't make a work folder. Is the disk full?"})
+        started = False
+
+        def say(obj):
+            self.wfile.write(json.dumps(obj).encode("utf-8") + b"\n")
+            self.wfile.flush()
+
+        try:
+            got = self._save_upload(tmp)
+            if not got:
+                return
+            src, name, _ext = got
+            ear = ear_model()
+            if not ear:
+                return self._json(503, {"error": "Long recordings need a model that can hear. Download Gemma first."})
+            work = os.path.join(tmp, "all.wav")
+            r = run_sandboxed(["/usr/bin/afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", src, work], tmp,
+                              timeout=1800, max_bytes=(MAX_LONG_AUDIO + 60) * 32000)
+            if r.too_big:
+                return self._json(413, {"error": "That file needed too much memory to open safely, so it was stopped."})
+            if r.returncode == -SIGXFSZ:
+                return self._json(400, {"error": "That recording is over 3 hours long. Split it and try again."})
+            if r.returncode != 0 or not _regular_file(work):
+                return self._json(415, {"error": "Couldn't read that file as audio. Try .m4a, .mp3, .wav or .aiff."})
+            _rm(src)
+            seconds = wav_seconds(work)
+            if seconds < 0.3:
+                return self._json(400, {"error": "That recording is too short or silent."})
+            if seconds > MAX_LONG_AUDIO:
+                return self._json(400, {"error": "That recording is over 3 hours long. Split it and try again."})
+            total = int(math.ceil(seconds / float(TRANSCRIBE_CHUNK)))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            started = True
+            settings = load_settings()
+            parts = []
+            with _switch_lock:                       # no model switch while this runs
+                _state["warming"] = ear
+                try:
+                    unload_all(except_model=ear)
+                    with wave.open(work, "rb") as w:
+                        rate, width, chans = w.getframerate(), w.getsampwidth(), w.getnchannels()
+                        for i in range(total):
+                            say({"part": i + 1, "of": total})
+                            frames = w.readframes(rate * TRANSCRIBE_CHUNK)
+                            if not frames:
+                                break
+                            piece = os.path.join(tmp, "part.wav")
+                            with wave.open(piece, "wb") as o:
+                                o.setnchannels(chans)
+                                o.setsampwidth(width)
+                                o.setframerate(rate)
+                                o.writeframes(frames)
+                            payload = {"model": ear, "stream": False, "think": False,
+                                       "messages": [{"role": "user", "content": TRANSCRIBE_PROMPT, "images": [_read_b64(piece)]}],
+                                       # Reply length capped at about twice what anyone can say in the slice.
+                                       "options": {"num_ctx": effective_ctx(settings, ear), "temperature": 0.0,
+                                                   "num_predict": int(len(frames) / float(rate * width * chans) * 7) + 120}}
+                            text = None
+                            for _try in range(2):
+                                try:
+                                    resp, conn = self._open_upstream("/api/chat", payload)
+                                    if resp is None:
+                                        raise InterruptedError
+                                    try:
+                                        raw = resp.read(MAX_UPSTREAM_BYTES)
+                                    finally:
+                                        conn.close()
+                                except InterruptedError:
+                                    raise
+                                except Exception as exc:      # the model server went quiet or dropped the line
+                                    raise RuntimeError("The model stopped answering during part %d (%s)." % (i + 1, friendly_error(exc)))
+                                if resp.status == 400 and b"think" in raw.lower() and "think" in payload:
+                                    payload.pop("think", None)
+                                    continue
+                                if resp.status != 200:
+                                    raise RuntimeError("The model couldn't listen to part %d: %s" % (i + 1, upstream_error(raw.decode("utf-8", "replace"))[:200]))
+                                answer = json.loads(raw.decode("utf-8"))
+                                text = str((answer.get("message") or {}).get("content") or "")
+                                if answer.get("done_reason") == "length":
+                                    text = _trim_loop(text)
+                                break
+                            if text is None:
+                                raise RuntimeError("The model refused to listen to part %d." % (i + 1))
+                            at = i * TRANSCRIBE_CHUNK
+                            parts.append("[%d:%02d:%02d]\n%s" % (at // 3600, at % 3600 // 60, at % 60, text.strip()))
+                finally:
+                    if _state["warming"] == ear:
+                        _state["warming"] = None
+                    if ear != load_settings()["model"]:      # leave only the chat model's turn in memory
+                        try:
+                            ollama_post("/api/generate", {"model": ear, "keep_alive": 0}, timeout=60).read()
+                        except Exception:
+                            pass
+                    forget_health()
+            text = clean_untrusted("\n\n".join(parts))[:MAX_DOC_CHARS].strip()
+            if len(re.sub(r"\s", "", text)) < 20:
+                return say({"error": "No speech was found in that recording."})
+            os.makedirs(DOC_DIR, exist_ok=True)
+            did = secrets.token_hex(8)
+            atomic_write(doc_path(did), None, text=text)
+            self._note_private(did)
+            base = os.path.splitext(name)[0][:100] or "recording"
+            say({"done": True, "id": did, "name": base + " (transcript).txt", "words": len(text.split()),
+                 "tokens": int(len(text) / 3.5), "seconds": round(seconds, 1)})
+        except InterruptedError:
+            pass
+        except (BrokenPipeError, ConnectionResetError, socket.timeout):
+            pass
+        except subprocess.TimeoutExpired:
+            if not started:
+                return self._json(500, {"error": "Converting the recording took too long."})
+        except Exception as exc:
+            if not started:
+                return self._json(500, {"error": friendly_error(exc)})
+            try:
+                say({"error": str(exc)[:300]})
+            except Exception:
+                pass
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+            _transcribe_lock.release()
+            if started:
+                self.close_connection = True
 
     def _serve_audio(self, aid):
         if not AUDIO_ID.match(aid):
@@ -2822,6 +3782,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/apps":
             return self._json(200, {"apps": list_apps()})
+        if path == "/api/trash":
+            return self._json(200, {"chats": list_trash(), "days": TRASH_DAYS})
+        if path == "/api/backup/status":
+            return self._json(200, backup_status())
+        if path == "/api/selfcheck":
+            try:
+                return self._json(200, {"checks": self_check()})
+            except RuntimeError as exc:
+                return self._json(503, {"error": str(exc)})
         if path == "/api/runs":
             return self._json(200, {"runs": read_runs()})
         if path == "/api/load":
@@ -2922,6 +3891,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(400, {"error": "Say what to draw."})
             if not imagegen_ready():
                 return self._json(503, {"error": "The picture maker isn't installed."})
+            if _transcribe_lock.locked():
+                return self._json(503, {"error": "A long recording is being written out. Try the picture when that's done."})
             size = payload.get("size")
             if not isinstance(size, str) or size not in IMAGE_SIZES:
                 size = load_settings()["image_size"]
@@ -2940,6 +3911,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(500, {"error": "Drawing took too long and was stopped."})
             except RuntimeError as exc:
                 return self._json(500, {"error": str(exc)})
+            if payload.get("private") is True:
+                try:
+                    private_note([iid])
+                except OSError:
+                    pass
             return self._json(200, {"id": iid, "seconds": round(secs, 1), "size": size})
         if path == "/api/preview":
             payload = self._body()
@@ -3002,6 +3978,61 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(500, {"error": "Couldn't record that approval, so nothing was changed."})
             atomic_write(ALLOW_FILE, {"names": names})
             return self._json(200, {"names": names})
+        if path in ("/api/trash/restore", "/api/trash/delete"):
+            payload = self._body()
+            if payload is None:
+                return
+            tid = payload.get("id")
+            if path.endswith("/delete") and payload.get("all") is True:
+                return self._json(200, {"removed": purge_trash()})
+            if not isinstance(tid, str) or not THREAD_ID.match(tid):
+                return self._json(400, {"error": "bad id"})
+            if path.endswith("/delete"):
+                return self._json(200, {"removed": purge_trash(tid=tid)})
+            try:
+                if not restore_trash(tid):
+                    return self._json(404, {"error": "That chat isn't in Recently deleted any more."})
+            except RuntimeError as exc:
+                return self._json(409, {"error": str(exc)})
+            return self._json(200, {"ok": True})
+        if path == "/api/private":
+            payload = self._body()
+            if payload is None:
+                return
+            ids = payload.get("ids")
+            if isinstance(ids, list):
+                private_note(ids)
+            removed = private_end() if payload.get("end") is True else 0
+            return self._json(200, {"ok": True, "removed": removed})
+        if path == "/api/models/delete":
+            payload = self._body()
+            if payload is None:
+                return
+            mid = payload.get("model")
+            if not isinstance(mid, str) or mid not in MODEL_BY_ID:
+                return self._json(400, {"error": "unknown model"})
+            try:
+                delete_model(mid)
+            except RuntimeError as exc:
+                return self._json(409, {"error": str(exc)})
+            return self._json(200, models_report(load_settings()))
+        if path == "/api/backup/password":
+            payload = self._body()
+            if payload is None:
+                return
+            pw = payload.get("password")
+            if not isinstance(pw, str) or len(pw) > 200 or (pw and len(pw) < 8):
+                return self._json(400, {"error": "Use a password of at least 8 characters."})
+            return self._json(200, {"has_password": set_backup_password(pw or "")})
+        if path == "/api/backup/now":
+            if self._body() is None:
+                return
+            try:
+                return self._json(200, {"file": backup_to_folder(), "status": backup_status()})
+            except RuntimeError as exc:
+                return self._json(409, {"error": str(exc)})
+            except Exception as exc:
+                return self._json(500, {"error": "Couldn't make the backup: " + friendly_error(exc)})
         if path == "/api/runs/clear":
             if self._body() is None:
                 return
@@ -3040,11 +4071,14 @@ class Handler(BaseHTTPRequestHandler):
                     if not _mark_used(rid):
                         return self._json(500, {"error": "Couldn't record that approval, so nothing was run."})
             try:
+                quiet = payload.get("private") is True      # a private chat leaves nothing in the run history
                 res = run_on_mac(lang, code, net, load_settings()["run_seconds"], stop=self._client_gone, auto=auto)
-                log_run(lang, code, net, auto, res)
+                if not quiet:
+                    log_run(lang, code, net, auto, res)
                 return self._json(200, res)
             except InterruptedError:
-                log_run(lang, code, net, auto, {"ok": False, "note": "Stopped before it finished.", "output": ""})
+                if not quiet:
+                    log_run(lang, code, net, auto, {"ok": False, "note": "Stopped before it finished.", "output": ""})
                 self.close_connection = True
                 return
             except RuntimeError as exc:
@@ -3056,7 +4090,17 @@ class Handler(BaseHTTPRequestHandler):
                 if not got:
                     return
                 try:
-                    return self._json(200, restore_backup(got[0]))
+                    zpath = got[0]
+                    with open(zpath, "rb") as fh:
+                        locked = fh.read(len(BK_MAGIC)) == BK_MAGIC
+                    if locked:
+                        pw = urllib.parse.unquote(self.headers.get("X-Backup-Pass") or "")[:200]
+                        zpath = os.path.join(tmp, "unlocked.zip")
+                        decrypt_backup(got[0], zpath, pw)
+                        _rm(got[0])
+                    return self._json(200, restore_backup(zpath))
+                except BackupPassword as exc:
+                    return self._json(400, {"error": str(exc), "need_password": True})
                 except (ValueError, zipfile.BadZipFile) as exc:
                     msg = str(exc) if isinstance(exc, ValueError) else "That file isn't a backup (not a zip)."
                     return self._json(400, {"error": msg})
@@ -3078,6 +4122,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._put_thread(path)
         if path == "/api/audio":            # raw uploads: read before the JSON body parser
             return self._upload_audio()
+        if path == "/api/transcribe":
+            return self._transcribe()
         if path == "/api/image":
             return self._upload_image()
         if path == "/api/doc":
@@ -3185,7 +4231,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(mid, str) or mid not in MODEL_BY_ID:
                 return self._json(400, {"error": "unknown model"})
             installed = installed_models() or []
-            if any(_matches(n, mid) for n in installed):
+            if any(_matches(n, mid) for n in installed) and payload.get("update") is not True:
                 return self._json(200, {"done": True, "already": True})
             _info_cache.pop(mid, None)
             self._stream_upstream("/api/pull", {"model": mid, "stream": True})
@@ -3237,6 +4283,10 @@ def main():
     save_settings({"think": False, "auto": True})
     os.makedirs(THREADS_DIR, exist_ok=True)
     shutil.rmtree(SCRATCH_DIR, ignore_errors=True)       # leftovers from a crash mid-upload
+    try:
+        private_end()                                    # files from a private chat that was open at the last quit
+    except Exception:
+        pass
     port = SERVER_PORT
     if os.environ.get("LOCALAI_SUPPORT_DIR"):          # started by the app, not by hand
         threading.Thread(target=_watch_parent, daemon=True).start()

@@ -504,6 +504,26 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .rail-reset { align-self: flex-start; margin-top: 14px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 9px; background: transparent; color: var(--text); font-size: 12px; }
 .rail-reset:hover { background: var(--hover); }
 .rail-note { margin: 14px 0 0; font-size: 11px; line-height: 1.5; color: var(--muted); }
+/* batch 4: private chat, compare, trash, backups, project files */
+.priv-btn { margin: -2px 12px 10px; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 7px; border-radius: 10px; font-size: 12.5px; color: var(--muted); border: 1px dashed var(--border2); }
+.priv-btn:hover { color: var(--text); background: var(--hover); }
+.pill.priv { color: #fff; background: #5b5f77; }
+.cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.cmp-col { min-width: 0; border: 1px solid var(--border2); border-radius: 12px; padding: 8px 12px 4px; }
+.cmp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--muted); padding-bottom: 6px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.cmp-head b { color: var(--text); }
+.cmp-head .btn { padding: 3px 9px; font-size: 12px; }
+.cmp-close { margin-top: 8px; font-size: 12px; color: var(--muted); text-decoration: underline; }
+@media (max-width: 900px) { .cmp { grid-template-columns: 1fr; } }
+.bk-pass { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 8px; }
+.bk-pass input, .store-acts select { font: inherit; font-size: 13px; color: var(--text); background: var(--hover); border: 1px solid var(--border); border-radius: 9px; padding: 6px 10px; }
+.rail-note.art-empty { padding: 10px 12px; margin: 0; }
+.pfiles { display: flex; flex-wrap: wrap; gap: 6px; }
+.pfiles .achip { animation: none; }
+.check-list { display: grid; grid-template-columns: 22px 170px 1fr; gap: 7px 10px; font-size: 13px; padding: 12px 0; }
+.check-list .ok { color: #16b364; } .check-list .bad { color: #e5484d; } .check-list .warn { color: #d97706; }
+.check-list span:nth-child(3n) { color: var(--muted); }
+.achip.busy.noted .an::after { content: ""; }
 /* ------------------------------------------------------------ small apps: preview panel + run output */
 .art { display: none; flex: none; width: 46%; min-width: 340px; max-width: 920px; flex-direction: column; background: var(--panel-solid); border-left: 1px solid var(--border); position: relative; z-index: 2; }
 .app.art-open .art { display: flex; }
@@ -579,6 +599,7 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); }
       <div><div class="brand-name"><span>Local</span> AI</div><div class="brand-sub" id="brandSub">on-device · private</div></div>
     </div>
     <button class="new-btn" id="newBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New chat <kbd>⌘N</kbd></button>
+    <button class="priv-btn" id="privBtn" title="A chat that is never saved, never added to memory, and erased when you leave it or quit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M17.9 17.9A10.4 10.4 0 0 1 12 20C5 20 1 12 1 12a18.5 18.5 0 0 1 5.1-5.9M9.9 4.2A9.1 9.1 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.2 3.2M1 1l22 22"/></svg>Private chat</button>
     <div class="search"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="search" placeholder="Search threads"></div>
     <select class="proj-filter" id="projFilter" hidden title="Show only one project's chats"></select>
     <div class="threads" id="threads"></div>
@@ -592,6 +613,7 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); }
       <button class="icon-btn" id="sideBtn" title="Toggle sidebar (⌘\)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button>
       <div class="title" id="title">New chat</div>
       <span class="pill pin" id="pinBadge" hidden title="This chat always uses this model. Click to unpin."></span>
+      <span class="pill priv" id="privBadge" hidden title="This chat is not saved anywhere. It is erased when you open another chat or quit.">Private · not saved</span>
       <select class="proj-sel" id="projSel" hidden title="The project this chat belongs to"></select>
       <div class="heat-wrap"><span class="pill heat" id="heat" title="How hard your Mac is working"><i></i><span id="heatText">Cool</span></span><div class="model-menu" id="heatMenu"></div></div>
       <div class="export-wrap artlist-wrap" id="artListWrap" hidden><button class="icon-btn" id="artListBtn" title="Artifacts in this chat: apps, drawings and previews"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span class="art-cnt" id="artCnt"></span></button><div class="model-menu export-menu artlist-menu" id="artListMenu"></div></div>
@@ -812,6 +834,8 @@ function finishDictation() {
 window.__localaiEvent = function (ev) {
   if (!ev || !ev.type) return;
   if (ev.type === "runApproval" || ev.type === "allowApproval") { var af = approvals[ev.id]; if (af) { delete approvals[ev.id]; if (!ev.ok && typeof ev.why === "string") toast(ev.why.slice(0, 300), "err"); af(ev.ok && typeof ev.sig === "string" ? ev.sig : null); } return; }
+  if (ev.type === "quickAsk") { quickAsk(ev.text); return; }
+  if (ev.type === "folder") { var fw = folderWaiter; folderWaiter = null; if (fw && typeof ev.path === "string" && ev.path) fw(ev.path); return; }
   if (ev.type === "speech") { if (ev.state === "end" && ev.id === speakingId) { speakingId = null; refreshSpeak(); renderRail(); voiceListenAgain(); } return; }
   if (ev.type === "status") {
     if (ev.state === "listening" && !dict.on) { native({ cmd: "mic.stop" }); return; }
@@ -1102,13 +1126,13 @@ function startRun(kind, code, where, t) {
       return askApproval(lang, code, net).then(function (ok) {
         if (!ok) return { denied: true, where: "mac" };
         runResults[code] = { running: true, where: "mac" }; paintRun(code);
-        return runFetch("/api/exec", { lang: lang, code: code, net: net, id: ok.id, sig: ok.sig });
+        return runFetch("/api/exec", { lang: lang, code: code, net: net, id: ok.id, sig: ok.sig, private: !!(t && t.private) });
       });
     }
     if (lang !== "bash" || !autoAllowed(code)) return ask();
     runResults[code] = { running: true, where: "mac" }; paintRun(code);       // on your no-asking list
-    return runFetch("/api/exec", { lang: "bash", code: code, auto: true }).then(function (r) { return r.error && /needs your OK/.test(r.error) ? ask() : r; });
-  }).then(function (r) { r.where = r.where || where; runResults[code] = r; paintRun(code); return r; });
+    return runFetch("/api/exec", { lang: "bash", code: code, auto: true, private: !!(t && t.private) }).then(function (r) { return r.error && /needs your OK/.test(r.error) ? ask() : r; });
+  }).then(function (r) { r.where = r.where || where; if (t && t.private) r.priv = true; runResults[code] = r; paintRun(code); return r; });
   runQueue = job.then(function () {}, function () {});
   return job;
 }
@@ -1221,18 +1245,16 @@ function sendRunOutput(box) {
 // Each app the model writes is kept in its chat as a list of versions
 // (thread.appVers). A full ```html reply adds a version; ```edit blocks change
 // the current one and add the result as a new version.
-var APP_VERS_MAX = 15, APP_BYTES_MAX = 1500000, pendingApp = null;
+var APP_VERS_MAX = 1, APP_BYTES_MAX = 1500000, pendingApp = null;
 var NEXT_RE = /next steps?\**:?\**[ \t]*\n+[ \t]*(?:1[.)]|[-*])[ \t]/i;
 function appVers(t) { return t && Array.isArray(t.appVers) ? t.appVers : []; }
 function appCurIndex(t) { var v = appVers(t); return !v.length ? -1 : (typeof t.appCur === "number" && t.appCur >= 0 && t.appCur < v.length ? t.appCur : v.length - 1); }
 function pushAppVersion(t, code, edited) {
   var v = appVers(t).slice(), tm = /<title[^>]*>([^<]{1,80})<\/title>/i.exec(code);
-  if (v.length && v[v.length - 1].code === code) { t.appCur = v.length - 1; return t.appCur; }
-  v.push({ code: code, ts: Date.now(), title: tm ? tm[1].trim() : "App", edited: !!edited });
-  function total() { return v.reduce(function (n, x) { return n + x.code.length; }, 0); }
-  while (v.length > APP_VERS_MAX || (v.length > 1 && total() > APP_BYTES_MAX)) v.shift();
-  t.appVers = v; t.appCur = v.length - 1;
-  return t.appCur;
+  // One version per chat: every new page or edit replaces the app (the user's choice: old versions only took up space).
+  if (v.length && v[v.length - 1].code === code) { t.appVers = [v[v.length - 1]]; t.appCur = 0; return 0; }
+  t.appVers = [{ code: code, ts: Date.now(), title: tm ? tm[1].trim() : "App", edited: !!edited }]; t.appCur = 0;
+  return 0;
 }
 function showAppVersion(t, i) { var v = appVers(t)[i]; if (!v || t !== cur) return; t.appCur = i; openArt("html", v.code, "html", i); }
 function refreshVerNav() {
@@ -1337,7 +1359,7 @@ function autoPreview(m) {
   }
   var ni = pushAppVersion(t, res.code, true);
   if (S.auto_preview !== false || art.open) openArt("html", res.code, "html", ni);
-  toast("App updated (version " + (ni + 1) + ")");
+  toast("App updated");
 }
 function appsSection() {
   var box = document.createElement("div"); box.className = "apps-list"; box.textContent = "Loading…";
@@ -1349,7 +1371,7 @@ function appsSection() {
       row.innerHTML = '<input class="app-name" maxlength="80" title="Click to rename"><small></small><span class="acts"><button class="btn" data-a="open">Open</button><button class="btn" data-a="save">Save file</button><button class="btn danger" data-a="del">Remove</button></span>';
       var name = row.querySelector("input");
       name.value = a.name;
-      row.querySelector("small").textContent = "from the chat “" + a.chat + "” · " + a.versions + " version" + (a.versions > 1 ? "s" : "") + " · " + new Date(a.updated).toLocaleDateString();
+      row.querySelector("small").textContent = "from the chat “" + a.chat + "” · " + new Date(a.updated).toLocaleDateString();
       function withThread(fn) {
         var live = cur && cur.id === a.tid ? cur : (streaming && streamThread && streamThread.id === a.tid ? streamThread : unsaved[a.tid]);
         return (live ? Promise.resolve(live) : api("GET", "/api/threads/" + a.tid).then(normalize)).then(fn).catch(function (e) { toast("Couldn't open that app: " + e.message, "err"); });
@@ -1404,12 +1426,13 @@ function projectsSection() {
     box.innerHTML = "";
     projList().forEach(function (p, i) {
       var row = document.createElement("div"); row.className = "proj-row";
-      row.innerHTML = '<input class="app-name" maxlength="60" placeholder="Project name"><textarea rows="3" maxlength="4000" placeholder="Instructions the model follows in every chat of this project (optional)"></textarea><button class="btn danger">Delete project</button>';
+      row.innerHTML = '<input class="app-name" maxlength="60" placeholder="Project name"><textarea rows="3" maxlength="4000" placeholder="Instructions the model follows in every chat of this project (optional)"></textarea><div class="pfiles"></div><button class="btn addf">Add documents…</button><input type="file" multiple hidden><button class="btn danger">Delete project</button>';
+      projectFiles(row, i, save, draw);
       var inp = row.querySelector("input"), ta = row.querySelector("textarea");
       inp.value = p.name; ta.value = p.instructions || "";
       inp.onchange = function () { var l = projList().slice(); l[i] = Object.assign({}, l[i], { name: inp.value.trim().slice(0, 60) || l[i].name }); save(l); };
       ta.onchange = function () { var l = projList().slice(); l[i] = Object.assign({}, l[i], { instructions: ta.value.trim().slice(0, 4000) }); save(l); };
-      row.querySelector("button").onclick = function (e) {
+      row.querySelector("button.danger").onclick = function (e) {
         var b = e.currentTarget;
         if (!b.dataset.sure) { b.dataset.sure = 1; b.textContent = "Click again (its chats are kept)"; return; }
         var l = projList().slice(); l.splice(i, 1); save(l); draw();
@@ -1420,7 +1443,7 @@ function projectsSection() {
     add.onclick = function () { var l = projList().slice(); l.push({ id: uid().replace(/[^a-z0-9-]/g, ""), name: "New project", instructions: "" }); save(l); draw(); };
     box.appendChild(add);
     var note = document.createElement("p"); note.className = "rail-note";
-    note.textContent = "Put a chat in a project with the menu at the top of the chat. Pick a project above the chat list to see only its chats; new chats you start then go into it.";
+    note.textContent = "Documents you add to a project can be used by every chat in it (PDF, Word, text; up to 20). Long ones are searched for each question. Put a chat in a project with the menu at the top of the chat. Pick a project above the chat list to see only its chats; new chats you start then go into it.";
     box.appendChild(note);
   }
   draw();
@@ -1505,6 +1528,196 @@ function macSection() {
   load();
   box.querySelector("#runsClear").onclick = function () { api("POST", "/api/runs/clear", {}).then(load).catch(function (e) { toast("Couldn't clear the history: " + e.message, "err"); }); };
   return box;
+}
+
+/* ------------------------------------------------------------ private chat: never saved, erased when you leave */
+var privateNoted = {};
+function privateMedia(t) {
+  var ids = [];
+  (t.messages || []).forEach(function (m) { attsOf(m).forEach(function (a) { if (a.id) ids.push(a.id); }); });
+  Object.keys(runResults).forEach(function (k) { if (runResults[k].priv) (runResults[k].charts || []).forEach(function (id) { ids.push(id); }); });
+  return ids;
+}
+function notePrivateIds(ids) {
+  ids = ids.filter(function (id) { return /^[0-9a-f]{16}$/.test(id) && !privateNoted[id]; });
+  if (!ids.length) return;
+  ids.forEach(function (id) { privateNoted[id] = true; });
+  api("POST", "/api/private", { ids: ids }).catch(function () { ids.forEach(function (id) { delete privateNoted[id]; }); });
+}
+function notePrivate(t) { if (!t._gone) notePrivateIds(privateMedia(t).concat(cur === t ? pending.map(function (a) { return a.id || ""; }) : [])); }
+// Called whenever the open chat is about to be replaced by another one.
+function leaveChat() {
+  var t = cur;
+  if (!t || !t.private || t._gone) return;
+  t._gone = true;
+  if ((streaming && streamThread === t) || (agent && agent.t === t)) stop();
+  var ids = privateMedia(t).concat(pending.map(function (a) { return a.id || ""; })).filter(function (id) { return /^[0-9a-f]{16}$/.test(id); });
+  pending.forEach(function (a) { if (a.abort) a.abort(); }); pending = []; renderAttach();
+  delete unsaved[t.id]; privateNoted = {};
+  var had = t.messages.length;
+  t.messages = []; t.summary = ""; delete t.appVers; delete t.appData;
+  api("POST", "/api/private", { ids: ids, end: true }).catch(function () {});       // if this fails, the files are erased at the next start
+  if (had) toast("Private chat erased");
+}
+function startPrivate() {
+  if (compacting || switching) return toast(busyMsg());
+  if (cur && cur.private && !cur.messages.length) return $("#input").focus();
+  openSeq++;
+  leaveChat();
+  cur = newThread(); cur.private = true; cur.title = "Private chat"; cur.titled = true; delete cur.project;
+  renderThread(); renderList(); setSendState(); $("#input").focus();
+}
+$("#privBtn").onclick = startPrivate;
+
+/* ------------------------------------------------------------ branch a chat, compare the two models */
+var ICON_BRANCH = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>';
+var ICON_COMPARE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7.5" height="16" rx="2"/><rect x="13.5" y="4" width="7.5" height="16" rx="2"/></svg>';
+function branchAt(idx) {
+  if (streaming || compacting || switching || agent) return toast(busyMsg());
+  var src = cur;
+  if (!src || src.private || idx < 0) return;
+  var t = newThread();
+  t.messages = JSON.parse(JSON.stringify(src.messages.slice(0, idx + 1)));
+  t.title = ((src.title || "Chat").slice(0, 70) + " (branch)"); t.titled = true; t.model = src.model; t.branchOf = src.id;
+  if (src.project) t.project = src.project; else delete t.project;
+  if (src.pin) t.pin = src.pin;
+  if (idx + 1 > src.compactedUpTo) { t.summary = src.summary; t.compactedUpTo = src.compactedUpTo; }   // else: the branch starts before the summary, so it has every message in full
+  if (appVers(src).length) { t.appVers = JSON.parse(JSON.stringify(appVers(src))); t.appCur = appCurIndex(src); }
+  openSeq++; cur = t;
+  renderThread(); renderListOptimistic(t); setSendState();
+  saveThread(t);
+  toast("Branched: this is a new chat with everything up to that point. The original is unchanged.");
+  $("#input").focus();
+}
+function compareTarget(m) {
+  var others = MODELS.filter(function (x) { return x.installed && x.id !== (m.model || ACTIVE); });
+  return others[0] || null;
+}
+function compareLast() {
+  if (agent) return toast("Wait for the code to finish running");
+  if (streaming || compacting || switching) return toast(busyMsg());
+  var t = cur, last = t.messages[t.messages.length - 1];
+  if (!last || last.role !== "assistant" || last.picture || !last.content) return;
+  var other = compareTarget(last);
+  if (!other) return toast("Comparing needs both models downloaded");
+  if (!H.ollamaUp) return toast("The model server isn't ready yet", "err");
+  var live = t.messages.slice(t.compactedUpTo).reduce(function (acc, m) { return acc.concat(attsOf(m)); }, []);
+  if (live.some(function (a) { return a.kind === "audio"; }) && !other.audio) return toast(other.short + " can't listen to the audio in this chat, so there is nothing to compare");
+  if (live.some(function (a) { return a.kind === "image"; }) && !other.vision) return toast(other.short + " can't see the photos in this chat, so there is nothing to compare");
+  stopSpeaking();
+  t._carry = { alts: last.alts ? last.alts.slice() : [snapAnswer(last)], sel: last.alts ? (last.alt || 0) : 0 };
+  t.messages.pop(); t.ctxTokens = 0; t._cmp = true;
+  renderThread();
+  toast("Asking " + other.short + " the same question. Changing models takes a moment." + (S.auto ? "" : " The app stays on " + other.short + " afterwards; pick another in the model menu."));
+  selectModel(other.id, true).then(function () {
+    if (ACTIVE === other.id && !switching && t === cur) return generate(t);
+    t._cmp = false;
+    if (t._carry) { t.messages.push(answerFromCarry(t._carry)); t._carry = null; if (t === cur) renderThread(true); }
+  });
+}
+function cmpOther(m) {
+  var a = m.alts || [], c = m.alt || 0, i;
+  for (i = a.length - 1; i >= 0; i--) if (i !== c && a[i].content && a[i].model && a[i].model !== m.model) return i;
+  for (i = a.length - 1; i >= 0; i--) if (i !== c && a[i].content) return i;
+  return -1;
+}
+function fillCompare(body, m) {
+  var o = cmpOther(m); if (o < 0 || !m.content) return;
+  var other = m.alts[o];
+  function name(x) { return (modelById(x.model) || { label: x.model || "Answer" }).label; }
+  body.innerHTML = '<div class="cmp"><div class="cmp-col"><div class="cmp-head"><b></b><span>kept in the chat</span></div><div class="cmp-body"></div></div><div class="cmp-col"><div class="cmp-head"><b></b><button class="btn">Keep this one instead</button></div><div class="cmp-body"></div></div></div><button class="cmp-close">Close the comparison</button>';
+  var heads = body.querySelectorAll(".cmp-head b"), bodies = body.querySelectorAll(".cmp-body");
+  heads[0].textContent = name(m); heads[1].textContent = name(other);
+  bodies[0].innerHTML = md(m.content); bodies[1].innerHTML = md(other.content);
+  body.querySelector(".cmp-head .btn").onclick = function () {
+    if (streaming || compacting) return toast(busyMsg());
+    Object.assign(m, m.alts[o]); m.alt = o; stopSpeaking(); renderThread(true); saveThread(cur);
+  };
+  body.querySelector(".cmp-close").onclick = function () { delete m.compare; renderThread(true); saveThread(cur); };
+}
+
+/* ------------------------------------------------------------ long recordings: written out as text, a few minutes at a time */
+function transcribeLong(f, slot) {
+  slot.kind = "doc"; slot.note = "long recording: getting ready…"; renderAttach();
+  toast("That recording is over 10 minutes, so it is being written out as text instead. This takes a while (roughly a minute for every 4 minutes of sound). Keep the app open.");
+  var ac = new AbortController(); slot.abort = function () { ac.abort(); };
+  var hd = { "X-Filename": encodeURIComponent(slot.name) }; if (slot.priv) hd["X-Private"] = "1";
+  return fetch("/api/transcribe", { method: "POST", headers: hd, body: f, signal: ac.signal }).then(function (r) {
+    if (!r.ok || (r.headers.get("content-type") || "").indexOf("ndjson") < 0) return r.json().catch(function () { return {}; }).then(function (j) { throw new Error(j.error || "Couldn't write out that recording"); });
+    var reader = r.body.getReader(), dec = new TextDecoder(), buf = "", result = null;
+    function handle(l) {
+      if (!l.trim()) return;
+      var ev; try { ev = JSON.parse(l); } catch (e) { return; }
+      if (ev.error) throw new Error(ev.error);
+      if (ev.part) { slot.note = "writing out part " + ev.part + " of " + ev.of + "…"; renderAttach(); }
+      if (ev.done) result = ev;
+    }
+    function pump() {
+      return reader.read().then(function (res) {
+        if (res.done) { buf += dec.decode(); handle(buf); if (!result) throw new Error("Writing out the recording stopped early. Try again."); return result; }
+        buf += dec.decode(res.value, { stream: true });
+        var lines = buf.split("\n"); buf = lines.pop(); lines.forEach(handle);
+        return pump();
+      });
+    }
+    return pump();
+  }).then(function (j) { delete slot.note; delete slot.abort; j.transcript = true; refreshModels(); return j; },
+          function (e) { refreshModels(); throw e; });
+}
+
+/* ------------------------------------------------------------ quick ask (Control-Option-A, from the app shell) */
+function quickAsk(text) {
+  text = String(text || "").slice(0, 20000).trim();
+  if (!text || !S) return;
+  var inp = $("#input");
+  if ($("#modalBg").classList.contains("show")) closeSettings();
+  if (streaming || compacting || switching || agent || (cur && cur.private && cur.messages.length)) {
+    inp.value = (inp.value.trim() ? inp.value.replace(/\s+$/, "") + "\n" : "") + text; autosize(); inp.focus();
+    return toast(cur && cur.private ? "Your question is in the message box (a private chat is open)" : "Busy right now: your question is waiting in the message box");
+  }
+  if (inp.value.trim() || pending.length) {
+    inp.value = (inp.value.trim() ? inp.value.replace(/\s+$/, "") + "\n" : "") + text; autosize(); inp.focus();
+    return toast("Added to the message you were writing. Press Send when you're ready.");
+  }
+  if (cur && cur.messages.length) startNew();
+  inp.value = text; autosize(); send();
+}
+
+/* ------------------------------------------------------------ project documents */
+function projectFiles(row, i, save, draw) {
+  var box = row.querySelector(".pfiles"), pick = row.querySelector('input[type="file"]'), p = projList()[i];
+  (p.files || []).forEach(function (f, k) {
+    var c = document.createElement("span"); c.className = "achip";
+    c.innerHTML = KINDS.doc.icon + '<span class="an"></span><span class="ad"></span><button class="ax" title="Remove from the project">' + ICON.x.replace(/18/g, "13") + "</button>";
+    c.querySelector(".an").textContent = f.name; c.querySelector(".ad").textContent = docInfo(f);
+    c.querySelector(".ax").onclick = function () { var l = projList().slice(), fs = (l[i].files || []).slice(); fs.splice(k, 1); l[i] = Object.assign({}, l[i], { files: fs }); save(l); draw(); };
+    box.appendChild(c);
+  });
+  row.querySelector(".addf").onclick = function () { pick.click(); };
+  pick.onchange = function () {
+    var files = Array.prototype.slice.call(pick.files || []); pick.value = "";
+    var room = 20 - ((projList()[i] || {}).files || []).length;
+    if (files.length > room) { toast("A project holds up to 20 documents"); files = files.slice(0, Math.max(0, room)); }
+    files = files.filter(function (f) { if (kindOf(f) !== "doc") { toast(f.name + " isn't a document. Projects take PDF, Word and text files.", "err"); return false; } return true; });
+    if (!files.length) return;
+    var bt = row.querySelector(".addf"); bt.disabled = true; bt.textContent = "Reading…";
+    var chain = Promise.resolve();
+    files.forEach(function (f) {
+      chain = chain.then(function () {
+        return fetch("/api/doc", { method: "POST", headers: { "X-Filename": encodeURIComponent(f.name) }, body: f })
+          .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.error || "upload failed"); return j; }); })
+          .then(function (j) {
+            var l = projList().slice(); if (!l[i] || l[i].id !== p.id) return;
+            var one = { id: j.id, name: j.name || f.name, words: j.words || 0, tokens: j.tokens || 0 }; if (j.pages) one.pages = j.pages;
+            l[i] = Object.assign({}, l[i], { files: (l[i].files || []).concat([one]) }); save(l);
+            if ((j.hidden || []).length || j.hidden_runs) toast("Hidden text was removed from " + one.name + ". Only what you can see was kept.");
+            if (j.pages && j.read && j.read < j.pages) toast("Only the first " + j.read + " of " + j.pages + " pages of " + one.name + " were read.", "err");
+          })
+          .catch(function (e) { toast(f.name + ": " + e.message, "err"); });
+      });
+    });
+    chain.then(function () { draw(); });
+  };
 }
 
 /* ------------------------------------------------------------ plugin rail */
@@ -1911,7 +2124,7 @@ function pushSettings() { settingsDirty = true; saveGen++; debouncedSave(); }
 // The native shell calls this before quitting so the last change is never lost.
 function flushAll() {
   var jobs = [saveSettingsNow()];
-  Object.keys(unsaved).forEach(function (id) { if (!deletedIds[id]) jobs.push(api("PUT", "/api/threads/" + id, tidyForSave(unsaved[id]), 1500).catch(function () {})); });
+  Object.keys(unsaved).forEach(function (id) { if (!deletedIds[id] && !unsaved[id].private) jobs.push(api("PUT", "/api/threads/" + id, tidyForSave(unsaved[id]), 1500).catch(function () {})); });
   return Promise.all(jobs).then(function () { return true; });
 }
 // A reply cut off by a quit or a close is saved as stopped, or dropped if it never started.
@@ -1928,7 +2141,7 @@ window.__localaiFlush = flushAll;
 window.addEventListener("pagehide", function () {
   // The open chat's unsaved turn goes out too (POST /api/threads/<id> is the same as PUT).
   if (navigator.sendBeacon) Object.keys(unsaved).forEach(function (id) {
-    if (deletedIds[id]) return;
+    if (deletedIds[id] || unsaved[id].private) return;
     var blob = new Blob([JSON.stringify(tidyForSave(unsaved[id]))], { type: "application/json" });
     if (blob.size < 60000) navigator.sendBeacon("/api/threads/" + id, blob);
   });
@@ -1995,6 +2208,7 @@ var SECTIONS = [
     { k: "style", type: "seg", label: "Answer style", desc: "How the models write their answers in every chat.", opts: [["normal", "Normal"], ["short", "Short"], ["detailed", "Detailed"], ["blunt", "Blunt"]] },
     { k: "run_seconds", type: "select", label: "Time limit for running code", desc: "A program or command is stopped after this long.", opts: [[30, "30 seconds"], [120, "2 minutes"], [300, "5 minutes"], [600, "10 minutes"]] },
     { k: "speak_replies", type: "toggle", label: "Read replies aloud", desc: "Every reply is read out loud with your Mac's voice when it finishes. Each reply also has a speaker button. Pick the voice in System Settings › Accessibility › Spoken Content." },
+    { k: "quick_ask", type: "toggle", label: "Quick ask from anywhere", desc: "While Local AI is open, press Control-Option-A in any app to get a small box. Type a question, press Return, and it starts a new chat here." },
     { k: "voice_auto_send", type: "toggle", label: "Send after dictation", desc: "When you stop talking, the message sends itself. Off means it waits in the box so you can check it first. The mic button and ⌘⇧M start dictation; it is recognized on this Mac by Apple's speech engine." }
   ] },
   { id: "model", label: "Model", lead: "Which model answers, and how. Only one is in RAM at a time.", items: [
@@ -2018,6 +2232,7 @@ var SECTIONS = [
   { id: "privacy", label: "Privacy & storage", lead: "Lock the app, clean up old chats, and back everything up.", items: [
     { k: "lock_on_open", type: "toggle", label: "Lock when the app opens", desc: "Asks for Touch ID or your Mac password before showing any chats. Starts the next time you open Local AI." },
     { k: "auto_delete_days", type: "select", label: "Delete old chats", desc: "Chats you haven't touched in this long are deleted for good, with their attachments. Checked every hour.", opts: [[0, "Never"], [7, "After 1 week"], [30, "After 1 month"], [90, "After 3 months"], [180, "After 6 months"], [365, "After 1 year"]] },
+    { type: "trash" },
     { type: "backup" },
     { type: "storage" }
   ] },
@@ -2062,6 +2277,7 @@ function renderSection() {
     if (it.type === "memories") { body.appendChild(memoriesSection()); return; }
     if (it.type === "prompts") { body.appendChild(promptsSection()); return; }
     if (it.type === "backup") { body.appendChild(backupSection()); return; }
+    if (it.type === "trash") { body.appendChild(trashSection()); return; }
     if (it.type === "storage") { body.appendChild(storageSection()); return; }
     if (it.type === "about") {
       row.className = "kv";
@@ -2070,9 +2286,11 @@ function renderSection() {
         "<span>Models</span><span>" + (modelLines || "—") + "</span>" +
         "<span>Licenses</span><span>Qwen 3.5: Apache 2.0 (Alibaba). Gemma 4: Apache 2.0 (Google).</span>" +
         "<span>Data folder</span><span><code>~/Library/Application Support/LocalAI</code> (settings.json, threads, models)</span>" +
-        '<span>Shortcuts</span><span>⌘N new chat · ⌘1 / ⌘2 switch model · ⌘⇧M dictate · ⌘, settings · ⌘\\ sidebar · ⌘+ / ⌘− zoom · Esc stop / close</span>' +
+        '<span>Check</span><span><button class="btn" id="checkBtn">Check my app</button> <small>Tries each part of the app with a harmless test.</small><div class="check-list" id="checkList" hidden></div></span>' +
+        '<span>Shortcuts</span><span>⌃⌥A quick ask (from any app) · ⌘N new chat · ⌘1 / ⌘2 switch model · ⌘⇧M dictate · ⌘, settings · ⌘\\ sidebar · ⌘+ / ⌘− zoom · Esc stop / close</span>' +
         '<span>Reset</span><span><button class="btn danger" id="resetBtn">Reset all settings</button></span>';
       body.appendChild(row);
+      $("#checkBtn").onclick = function (e) { runSelfCheck(e.currentTarget, $("#checkList")); };
       $("#resetBtn").onclick = function (e) {
         var b = e.currentTarget;
         if (!b.dataset.sure) { b.dataset.sure = 1; b.textContent = "Click again to reset"; return; }
@@ -2098,6 +2316,7 @@ function renderSection() {
       ctl.onclick = function () {
         setSetting(it.k, !S[it.k]); ctl.classList.toggle("on", !!S[it.k]);
         if (it.k === "lock_on_open" && S[it.k]) toast("Locked from the next time you open Local AI");
+        if (it.k === "quick_ask") native({ cmd: "quickAsk", on: !!S[it.k] });
       };
     } else if (it.type === "accent") {
       ctl = document.createElement("div"); ctl.className = "swatches";
@@ -2155,6 +2374,10 @@ function renderSection() {
 function newThread() { return { id: uid(), title: DEFAULT_TITLE, created: Date.now(), updated: Date.now(), messages: [], summary: "", compactedUpTo: 0, ctxTokens: 0, model: ACTIVE, project: projFilter || undefined }; }
 function normalize(t) {
   t.messages = t.messages || []; t.summary = t.summary || ""; t.compactedUpTo = t.compactedUpTo || 0; t.ctxTokens = t.ctxTokens || 0;
+  if (Array.isArray(t.appVers) && t.appVers.length > 1) {      // chats from before "one version": keep the one in use, drop the rest
+    t.appVers = [t.appVers[appCurIndex(t)]]; t.appCur = 0;
+    setTimeout(function () { if (!deletedIds[t.id]) saveThread(t, false, true); }, 0);
+  }
   return t;
 }
 var deletedIds = {};
@@ -2182,6 +2405,7 @@ function liveThread(id) {
   return cur && cur.id === id ? cur : (streaming && streamThread && streamThread.id === id ? streamThread : (unsaved[id] || null));
 }
 function saveThread(t, isRetry, keepTime) {
+  if (t.private) { delete unsaved[t.id]; notePrivate(t); return Promise.resolve(); }     // a private chat is never written to disk
   if (deletedIds[t.id]) return Promise.resolve();
   if (!keepTime) t.updated = Date.now();
   unsaved[t.id] = t;
@@ -2246,7 +2470,7 @@ function renderList() {
       api("DELETE", "/api/threads/" + t.id).then(function () {
         refreshSearch();
         if (cur && cur.id === t.id) { cur = newThread(); renderThread(); }
-        refreshList(); toast("Thread deleted");
+        refreshList(); toast("Moved to Recently deleted. Kept 30 days (Settings › Privacy & storage).");
       }).catch(function (e) { delete deletedIds[t.id]; toast("Couldn't delete: " + e.message, "err"); renderList(); });
     };
     box.appendChild(el);
@@ -2285,6 +2509,7 @@ function openThread(id, q) {
   var local = (streaming && streamThread && streamThread.id === id) ? streamThread : unsaved[id];
   (local ? Promise.resolve(local) : api("GET", "/api/threads/" + id)).then(function (t) {
     if (seq !== openSeq || compacting || switching) return;   // something newer happened meanwhile
+    leaveChat();
     cur = local ? t : normalize(t); renderThread(); renderList(); setSendState();
     if (q) setTimeout(function () { jumpToMatch(q); }, 60);
     if (window.innerWidth <= 760) $("#app").classList.add("collapsed");
@@ -2306,6 +2531,7 @@ function busyMsg() {
 function startNew() {
   if (compacting || switching) return toast(busyMsg());
   openSeq++;
+  leaveChat();
   cur = newThread(); renderThread(); renderList(); setSendState(); $("#input").focus();
 }
 
@@ -2320,6 +2546,7 @@ function welcome() {
   var w = document.createElement("div"); w.className = "welcome";
   w.innerHTML = '<div class="orb"></div><h1>What are we working on?</h1><p id="welcomeSub"></p><div class="chips"></div>';
   w.querySelector("#welcomeSub").textContent = welcomeText();
+  if (cur && cur.private) { w.querySelector("h1").textContent = "Private chat"; w.querySelector("#welcomeSub").textContent = "Nothing here is saved, searched or added to memory. It is erased, with any files you send, when you open another chat or quit."; return w; }
   SUGGEST.forEach(function (s) {
     var c = document.createElement("button"); c.className = "chip";
     c.innerHTML = esc(s[0]) + "<small>" + esc(s[1]) + "</small>";
@@ -2380,6 +2607,7 @@ function msgEl(m, idx, live) {
     w.querySelector(".rem").onclick = function () { var mm = m.content.match(REMEMBER_RE); addMemory(mm ? mm[1].trim() : m.content); };
     w.querySelector(".ed").onclick = function () { startEdit(w, m); };
     if (live === "noedit" || idx < cur.compactedUpTo) w.querySelector(".ed").remove();
+    if (cur.private) w.querySelector(".rem").remove();
     if (!live && idx === cur.messages.length - 1 && !streaming) {
       // No reply after this message (stopped early, or the model switch failed): offer to answer it.
       var go = document.createElement("button"); go.className = "icon-btn rt"; go.title = "Get an answer to this message"; go.innerHTML = ICON.retry;
@@ -2429,6 +2657,7 @@ function fillAssistant(w, m, live, idx) {
   });
   var meta = w.querySelector(".meta");
   if (live) { meta.innerHTML = ""; return; }
+  if (m.compare && !m.picture) fillCompare(body, m);
   var pager = m.alts && m.alts.length > 1 ? '<span class="alts"><button class="icon-btn ap" title="Previous answer">‹</button><span>' + ((+m.alt || 0) + 1) + "/" + (+m.alts.length || 0) + '</span><button class="icon-btn an" title="Next answer">›</button></span>' : "";
   meta.innerHTML = pager + '<button class="icon-btn cp" title="Copy">' + ICON.copy + '</button><button class="icon-btn spk" title="Read aloud"></button>' + (idx === cur.messages.length - 1 ? '<button class="icon-btn rt" title="Try again (keeps this answer too)">' + ICON.retry + "</button>" : "") + statsHtml(m);
   if (pager) {
@@ -2445,6 +2674,16 @@ function fillAssistant(w, m, live, idx) {
     var sr = document.createElement("button"); sr.className = "icon-btn svr"; sr.title = "Save this reply as a file"; sr.innerHTML = ICON.savepic;
     sr.onclick = function () { saveText(fileSlug(cur.title && cur.title !== DEFAULT_TITLE ? cur.title : "reply") + ".md", m.content); };
     meta.insertBefore(sr, meta.querySelector(".spk"));
+  }
+  if (!m.picture && m.content && !cur.private) {
+    var bb = document.createElement("button"); bb.className = "icon-btn brn"; bb.title = "Branch: start a new chat from this point (this chat stays as it is)"; bb.innerHTML = ICON_BRANCH;
+    bb.onclick = function () { branchAt(cur.messages.indexOf(m)); };
+    meta.insertBefore(bb, meta.querySelector(".spk"));
+  }
+  if (!m.picture && m.content && idx === cur.messages.length - 1 && compareTarget(m)) {
+    var cb2 = document.createElement("button"); cb2.className = "icon-btn cmpb"; cb2.title = "Compare: ask " + compareTarget(m).short + " the same question and see both answers side by side"; cb2.innerHTML = ICON_COMPARE;
+    cb2.onclick = compareLast;
+    meta.insertBefore(cb2, meta.querySelector(".spk"));
   }
   if (!m.picture && idx === cur.messages.length - 1 && NEXT_RE.test(m.content || "")) {
     var nb = document.createElement("button"); nb.className = "next-step"; nb.textContent = "Build next step"; nb.title = "Asks the model to build the next item on its list";
@@ -2520,6 +2759,7 @@ function togglePin() {
 $("#pinBadge").onclick = togglePin;
 function renderThread(keepScroll) {
   refreshRunChips(); refreshProjectUI();
+  $("#privBadge").hidden = !(cur && cur.private); if (cur && cur.private) $("#projSel").hidden = true;
   if (cur && cur._pend && !streaming && !agent && !compacting && !switching) {
     delete cur._pend;
     var pt = cur, pm = pt.messages[pt.messages.length - 1];
@@ -2582,6 +2822,8 @@ function ctxParts(t, forCtx) {
       p.files += Math.round((a.kind === "audio" ? (a.seconds || 0) * 25 : a.kind === "image" ? 800 : Math.min(a.tokens || 0, c * 0.6)) * 3.3);
     });
   });
+  var pjc = t.project && projById(t.project), pft = pjc && Array.isArray(pjc.files) ? pjc.files.reduce(function (n, f) { return n + (f.tokens || 0); }, 0) : 0;
+  if (pft && t.messages.length) { anyFile = true; p.files += Math.round(Math.min(pft, c * 0.6) * 3.3); }
   if (anyFile) p.rules += FILE_RULES_CHARS;
   Object.keys(p).forEach(function (k) { p[k] = Math.round(p[k] / 3.3); });
   return p;
@@ -2706,6 +2948,11 @@ function buildMessages(t) {
     if (au.length) o.audio = au; if (im.length) o.imgs = im; if (dc.length) o.docs = dc;
     out.push(o);
   });
+  var pf = pj && Array.isArray(pj.files) ? pj.files : [];
+  if (pf.length) for (var k = 0; k < out.length; k++) if (out[k].role === "user") {    // the project's documents ride on the first message
+    out[k] = Object.assign({}, out[k], { docs: (out[k].docs || []).concat(pf.map(function (f) { return { id: f.id, name: f.name }; })) });
+    break;
+  }
   return out;
 }
 function canSend() { return !!(H.ollamaUp && activeModel().installed); }
@@ -2741,8 +2988,9 @@ function renderAttach() {
     c.innerHTML = lead + '<span class="an"></span><span class="ad"></span><button class="ax" title="Remove">' + ICON.x.replace(/18/g, "13") + "</button>";
     if (a.kind === "image" && a.id) c.querySelector(".athumb").src = "/api/image/" + encodeURIComponent(a.id);
     c.querySelector(".an").textContent = a.name;
-    c.querySelector(".ad").textContent = a.busy ? "" : a.kind === "audio" ? fmtDur(a.seconds) : a.kind === "doc" ? docInfo(a) : "";
-    c.querySelector(".ax").onclick = function () { pending.splice(i, 1); renderAttach(); };
+    c.querySelector(".ad").textContent = a.busy ? (a.note || "") : a.kind === "audio" ? fmtDur(a.seconds) : a.kind === "doc" ? docInfo(a) : "";
+    if (a.busy && a.note) c.classList.add("noted");
+    c.querySelector(".ax").onclick = function () { if (a.abort) a.abort(); pending.splice(i, 1); renderAttach(); };
     box.appendChild(c);
   });
   box.classList.toggle("show", pending.length > 0);
@@ -2762,14 +3010,19 @@ function addFiles(files, forced) {
     if (pending.length >= 6) return toast("Up to 6 attachments per message");
     if (f.size > 400 * 1024 * 1024) return toast(f.name + " is over 400 MB; that's too big to attach.", "err");
     if (kind === "audio" && pending.filter(function (a) { return a.kind === "audio"; }).length >= 3) return toast("Up to 3 audio files per message");
-    var slot = { kind: kind, busy: true, name: f.name || (kind === "image" ? "Pasted image.png" : "file") };
+    var slot = { kind: kind, busy: true, name: f.name || (kind === "image" ? "Pasted image.png" : "file"), priv: !!(cur && cur.private) };
     pending.push(slot); renderAttach();
-    var upAc = new AbortController(), upTimer = setTimeout(function () { upAc.abort(); }, 15 * 60000);
-    fetch(KINDS[kind].url, { method: "POST", headers: { "X-Filename": encodeURIComponent(slot.name) }, body: f, signal: upAc.signal })
+    var upAc = new AbortController(), upTimer = setTimeout(function () { upAc.abort(); }, 35 * 60000);
+    var upHd = { "X-Filename": encodeURIComponent(slot.name) }; if (slot.priv) upHd["X-Private"] = "1";      // the server erases a private chat's files itself
+    slot.abort = function () { upAc.abort(); };
+    fetch(KINDS[kind].url, { method: "POST", headers: upHd, body: f, signal: upAc.signal })
       .finally(function () { clearTimeout(upTimer); })
-      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.error || "upload failed"); return j; }); })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) { var er = new Error(j.error || "upload failed"); er.long = j.long === true; throw er; } return j; }); })
+      .catch(function (e) { if (e.long && kind === "audio" && pending.indexOf(slot) >= 0) return transcribeLong(f, slot); throw e; })
       .then(function (j) {
-        if (pending.indexOf(slot) < 0) return;          // removed while uploading
+        if (pending.indexOf(slot) < 0) { if (slot.priv && !(cur && cur.private)) api("POST", "/api/private", { end: true }).catch(function () {}); return; }   // removed while uploading
+        delete slot.abort;
+        if (j.transcript) kind = "doc";
         slot.busy = false; slot.id = j.id; slot.name = j.name || slot.name;
         if (kind === "audio") slot.seconds = j.seconds;
         if (kind === "doc") {
@@ -2783,11 +3036,12 @@ function addFiles(files, forced) {
           var unr = (j.unread || []).length;
           if (unr) toast("Couldn't read scanned " + (unr === 1 ? "page " : "pages ") + j.unread.join(", ") + ". Try sending " + (unr === 1 ? "it" : "them") + " as a photo.", "err");
           if (unc) toast((unc === 1 ? "Page " : "Pages ") + j.unchecked.join(", ") + " couldn't be checked, so " + (unc === 1 ? "it was" : "they were") + " left out", "err");
-          if (j.tokens > ctx() * 0.6) toast("That document is about " + fmtK(j.tokens) + " tokens, more than fits in the " + ctxLabel(ctx()) + " context. Only the first part will be read. Raise the context window in Settings › Model to fit more.");
+          if (j.tokens > ctx() * 0.6 && !j.transcript) toast("That document is long (about " + fmtK(j.tokens) + " tokens), so it won't be read whole. For each question the app searches it and gives the model the parts that match, with page numbers. Ask specific questions for the best answers.");
+          if (j.transcript) toast("Recording written out: " + fmtK(j.words) + " words. It is attached as a document.");
         }
         renderAttach(); $("#input").focus();
       })
-      .catch(function (e) { var k = pending.indexOf(slot); if (k >= 0) pending.splice(k, 1); renderAttach(); toast(e.name === "AbortError" ? "The upload took too long" : e.message, "err"); });
+      .catch(function (e) { var k = pending.indexOf(slot); if (k < 0) return; pending.splice(k, 1); renderAttach(); toast(e.name === "AbortError" ? "The upload took too long" : e.message, "err"); });
   });
 }
 $("#audioBtn").onclick = function () { $("#audioFile").click(); };
@@ -2958,34 +3212,205 @@ function slashKey(e) {
 }
 
 /* ---------- backup, restore, storage ---------- */
+var folderWaiter = null;        // gets the folder the person picked in the app's own folder panel
 function backupSection() {
-  var sec = document.createElement("div"); sec.className = "row";
-  sec.innerHTML = '<div class="lbl"><b>Backup</b><small>One .zip with every chat, attachment, memory, prompt and setting (not the models). Restoring adds the chats back; a chat that is newer on this Mac is kept.</small></div>' +
-    '<div class="store-acts"><button class="btn primary" id="bkBtn">Back up…</button><button class="btn" id="rsBtn">Restore…</button><input type="file" id="rsFile" accept=".zip,application/zip" hidden></div>';
-  sec.querySelector("#bkBtn").onclick = function () {
+  var sec = document.createElement("div"); sec.className = "row stack";
+  sec.innerHTML = '<div class="lbl"><b>Backup</b><small>One file with every chat, attachment, memory, prompt and setting (not the models). “Back up…” saves a plain .zip where you choose. Restoring adds the chats back; a chat that is newer on this Mac is kept.</small></div>' +
+    '<div class="store-acts"><button class="btn primary" id="bkBtn">Back up…</button><button class="btn" id="rsBtn">Restore…</button><input type="file" id="rsFile" accept=".zip,.localaibackup,application/zip" hidden></div>' +
+    '<div class="bk-pass" id="rsPass" hidden><input type="password" id="rsPw" placeholder="Password for this backup" autocomplete="off"><button class="btn primary" id="rsGo">Unlock and restore</button></div>' +
+    '<div class="lbl"><b>Automatic backups</b><small>Local AI can copy a backup into a folder you pick (an external drive is best) every day or week, and keeps the newest 7 there. With a password, each backup file is locked and can only be opened with that password. Write the password down: a forgotten one cannot be recovered.</small></div>' +
+    '<div class="kv" id="bkKv"><span>Checking…</span><span></span></div>' +
+    '<div class="store-acts"><button class="btn" id="bkDir">Choose folder…</button><select id="bkAuto" title="How often"><option value="off">Off</option><option value="daily">Every day</option><option value="weekly">Every week</option></select><button class="btn" id="bkPw">Set password…</button><button class="btn" id="bkNow">Back up now</button></div>' +
+    '<div class="bk-pass" id="bkPwBox" hidden><input type="password" id="bkPw1" placeholder="New password (8 or more characters)" autocomplete="new-password"><input type="password" id="bkPw2" placeholder="Type it again" autocomplete="new-password"><button class="btn primary" id="bkPwSave">Save password</button><button class="btn danger" id="bkPwOff">Remove password</button></div>';
+  function q(id) { return sec.querySelector(id); }
+  function line(kv, k, v) { var x = document.createElement("span"), y = document.createElement("span"); x.textContent = k; y.textContent = v; kv.appendChild(x); kv.appendChild(y); }
+  var st = null;
+  function load() {
+    return api("GET", "/api/backup/status").then(function (j) {
+      st = j; var kv = q("#bkKv"); kv.innerHTML = "";
+      line(kv, "Folder", j.dir ? j.dir + (j.dir_ok ? "" : " (not found right now: is the drive plugged in?)") : "Not chosen yet");
+      line(kv, "Password", j.has_password ? "Set. New backups in the folder are locked." : "None. Anyone who has the folder can read the backups.");
+      line(kv, "Last backup", j.last_ok ? new Date(j.last_ok * 1000).toLocaleString() + " · " + j.count + " kept" : "None yet");
+      if (j.error && j.error_at > j.last_ok) line(kv, "Last try failed", j.error);
+      q("#bkAuto").value = j.auto; q("#bkPw").textContent = j.has_password ? "Change password…" : "Set password…"; q("#bkPwOff").hidden = !j.has_password;
+    }).catch(function (e) { q("#bkKv").textContent = "Couldn't check: " + e.message; });
+  }
+  q("#bkBtn").onclick = function () {
     if (NATIVE) { native({ cmd: "backup" }); return; }
     fetch("/api/backup").then(function (r) { if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { throw new Error(j.error || "HTTP " + r.status); }); return r.blob(); })
       .then(function (b) { var a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "Local AI backup.zip"; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000); })
       .catch(function (e) { toast("Couldn't make the backup: " + e.message, "err"); });
   };
-  var file = sec.querySelector("#rsFile");
-  sec.querySelector("#rsBtn").onclick = function () { file.click(); };
-  file.onchange = function () {
-    var f = file.files && file.files[0]; if (!f) return;
-    if (f.size > 4 * 1024 * 1024 * 1024) { file.value = ""; return toast("That backup is over 4 GB; too big to restore.", "err"); }
+  var file = q("#rsFile"), held = null;
+  function doRestore(f, pw) {
     toast("Restoring " + f.name + "…");
+    var hd = { "X-Filename": encodeURIComponent(f.name) }; if (pw) hd["X-Backup-Pass"] = encodeURIComponent(pw);
     var rsAc = new AbortController(), rsTimer = setTimeout(function () { rsAc.abort(); }, 35 * 60000);
-    fetch("/api/restore", { method: "POST", headers: { "X-Filename": encodeURIComponent(f.name) }, body: f, signal: rsAc.signal })
+    fetch("/api/restore", { method: "POST", headers: hd, body: f, signal: rsAc.signal })
       .finally(function () { clearTimeout(rsTimer); })
-      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.error || "restore failed"); return j; }); })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { j._ok = r.ok; return j; }); })
       .then(function (j) {
+        if (!j._ok && j.need_password) { held = f; q("#rsPass").hidden = false; q("#rsPw").value = ""; q("#rsPw").focus(); return toast(j.error || "This backup needs its password", "err"); }
+        if (!j._ok) throw new Error(j.error || "restore failed");
+        held = null; q("#rsPass").hidden = true;
         toast("Restored " + j.chats + (j.chats === 1 ? " chat" : " chats") + ", " + j.files + " attachments" + (j.settings ? " and your settings" : "") + (j.skipped_newer ? ". Kept " + j.skipped_newer + " newer chats from this Mac" : "") + (j.skipped_bad ? ". Skipped " + j.skipped_bad + " damaged entries" : ""));
         settingsDirty = false; setTimeout(function () { location.reload(); }, 1800);
       })
       .catch(function (e) { toast("Couldn't restore: " + e.message, "err"); });
-    file.value = "";
+  }
+  q("#rsBtn").onclick = function () { file.click(); };
+  file.onchange = function () {
+    var f = file.files && file.files[0]; file.value = ""; if (!f) return;
+    if (f.size > 4 * 1024 * 1024 * 1024) return toast("That backup is over 4 GB; too big to restore.", "err");
+    doRestore(f, "");
   };
+  q("#rsGo").onclick = function () { if (held && q("#rsPw").value) doRestore(held, q("#rsPw").value); };
+  q("#rsPw").onkeydown = function (e) { if (e.key === "Enter") q("#rsGo").click(); e.stopPropagation(); };
+  function setDir(path) {
+    api("POST", "/api/settings", { backup_dir: path }).then(function (j) {
+      S.backup_dir = j.settings.backup_dir; rememberSaved({ backup_dir: S.backup_dir });
+      if (!S.backup_dir) toast("That folder can't be used. Pick a normal folder, not one inside the app.", "err"); else toast("Backups will go to " + S.backup_dir);
+      load();
+    }).catch(function (e) { toast(e.message, "err"); });
+  }
+  q("#bkDir").onclick = function () {
+    if (NATIVE) { folderWaiter = setDir; native({ cmd: "pickFolder" }); return; }
+    var v = window.prompt("Full path of the backup folder", (st && st.dir) || ""); if (v) setDir(v.trim());
+  };
+  q("#bkAuto").onchange = function () {
+    var v = q("#bkAuto").value;
+    if (v !== "off" && !(st && st.dir)) { q("#bkAuto").value = "off"; return toast("Choose a folder first"); }
+    setSetting("auto_backup", v); toast(v === "off" ? "Automatic backups off" : "A backup will be made " + (v === "daily" ? "every day" : "every week") + " while the app is open");
+  };
+  q("#bkPw").onclick = function () { var bx = q("#bkPwBox"); bx.hidden = !bx.hidden; if (!bx.hidden) q("#bkPw1").focus(); };
+  q("#bkPwSave").onclick = function () {
+    var a1 = q("#bkPw1").value, a2 = q("#bkPw2").value;
+    if (a1.length < 8) return toast("Use at least 8 characters", "err");
+    if (a1 !== a2) return toast("The two passwords don't match", "err");
+    api("POST", "/api/backup/password", { password: a1 }).then(function () { q("#bkPw1").value = q("#bkPw2").value = ""; q("#bkPwBox").hidden = true; toast("Password saved. Backups in the folder are locked from now on. Write it down somewhere safe."); load(); })
+      .catch(function (e) { toast(e.message, "err"); });
+  };
+  q("#bkPwOff").onclick = function (e) {
+    var bt = e.currentTarget; if (!bt.dataset.sure) { bt.dataset.sure = 1; bt.textContent = "Click again to remove"; return; }
+    api("POST", "/api/backup/password", { password: "" }).then(function () { delete bt.dataset.sure; bt.textContent = "Remove password"; q("#bkPwBox").hidden = true; toast("Password removed. New backups will not be locked. Older locked files still need the old password."); load(); })
+      .catch(function (e2) { toast(e2.message, "err"); });
+  };
+  ["#bkPw1", "#bkPw2"].forEach(function (id) { q(id).onkeydown = function (e) { if (e.key === "Enter") q("#bkPwSave").click(); e.stopPropagation(); }; });
+  q("#bkNow").onclick = function (e) {
+    var bt = e.currentTarget; bt.disabled = true; bt.textContent = "Backing up…";
+    api("POST", "/api/backup/now", {}, 30 * 60000).then(function (j) { toast("Backup saved: " + j.file); })
+      .catch(function (e2) { toast(e2.message, "err"); })
+      .then(function () { bt.disabled = false; bt.textContent = "Back up now"; load(); });
+  };
+  load();
   return sec;
+}
+/* ---------- recently deleted ---------- */
+function trashSection() {
+  var sec = document.createElement("div"); sec.className = "row stack";
+  sec.innerHTML = '<div class="lbl"><b>Recently deleted</b><small>A chat you delete waits here for 30 days, then it is erased for good with its attachments. Chats removed by “Delete old chats” above skip this and are erased at once.</small></div><div class="apps-list"></div>';
+  var box = sec.querySelector(".apps-list");
+  function load() {
+    api("GET", "/api/trash").then(function (j) {
+      box.textContent = "";
+      if (!j.chats.length) { box.innerHTML = '<p class="rail-note">Nothing here.</p>'; return; }
+      j.chats.forEach(function (c) {
+        var row = document.createElement("div"); row.className = "app-row";
+        row.innerHTML = '<b></b><small></small><span class="acts"><button class="btn" data-a="back">Put back</button><button class="btn danger" data-a="del">Erase now</button></span>';
+        row.querySelector("b").textContent = c.title;
+        row.querySelector("small").textContent = c.count + (c.count === 1 ? " message" : " messages") + " · erased in " + c.days_left + (c.days_left === 1 ? " day" : " days");
+        row.querySelector('[data-a="back"]').onclick = function () {
+          api("POST", "/api/trash/restore", { id: c.id }).then(function () { delete deletedIds[c.id]; toast("“" + c.title + "” is back in your chats"); refreshList(); refreshSearch(); load(); })
+            .catch(function (e) { toast(e.message, "err"); load(); });
+        };
+        row.querySelector('[data-a="del"]').onclick = function (e) {
+          var bt = e.currentTarget; if (!bt.dataset.sure) { bt.dataset.sure = 1; bt.textContent = "Click again: this can't be undone"; return; }
+          api("POST", "/api/trash/delete", { id: c.id }).then(function () { toast("Erased"); load(); }).catch(function (e2) { toast(e2.message, "err"); });
+        };
+        box.appendChild(row);
+      });
+      var all = document.createElement("button"); all.className = "btn danger"; all.textContent = "Erase all " + j.chats.length + " now";
+      all.onclick = function () {
+        if (!all.dataset.sure) { all.dataset.sure = 1; all.textContent = "Click again: this can't be undone"; return; }
+        api("POST", "/api/trash/delete", { all: true }).then(function (r) { toast("Erased " + r.removed + (r.removed === 1 ? " chat" : " chats")); load(); }).catch(function (e2) { toast(e2.message, "err"); });
+      };
+      box.appendChild(all);
+    }).catch(function (e) { box.textContent = "Couldn't check: " + e.message; });
+  }
+  load();
+  return sec;
+}
+/* ---------- models on disk: delete, download, check for a newer copy ---------- */
+function modelRows(reload) {
+  var box = document.createElement("div"); box.className = "apps-list";
+  function draw() {
+    box.textContent = "";
+    MODELS.forEach(function (m) {
+      var row = document.createElement("div"); row.className = "app-row";
+      row.innerHTML = '<b></b><small></small><span class="acts"></span>';
+      row.querySelector("b").textContent = m.label;
+      row.querySelector("small").textContent = (m.installed ? "Downloaded · about " : "Not downloaded · ") + m.size_gb + " GB" + (m.id === ACTIVE ? " · in use" : "");
+      var acts = row.querySelector(".acts");
+      function btn(text, cls, fn) { var bt = document.createElement("button"); bt.className = "btn" + (cls ? " " + cls : ""); bt.textContent = text; bt.onclick = function () { fn(bt); }; acts.appendChild(bt); return bt; }
+      if (!m.installed) btn(pulling[m.id] ? "Downloading…" : "Download", "primary", function (bt) { if (pulling[m.id]) return; bt.textContent = "Downloading…"; pullModel(m.id); toast("Downloading " + m.label + ". You can keep using the app."); });
+      else {
+        btn("Check for a newer version", "", function (bt) { updateModel(m, bt); });
+        btn("Delete from this Mac", "danger", function (bt) {
+          if (streaming || compacting || switching || agent) return toast(busyMsg());
+          if (!bt.dataset.sure) { bt.dataset.sure = 1; bt.textContent = "Click again (frees " + m.size_gb + " GB; you can download it again)"; return; }
+          bt.disabled = true;
+          api("POST", "/api/models/delete", { model: m.id }, 180000).then(function () { toast(m.label + " deleted from this Mac"); return refreshModels(); })
+            .catch(function (e) { toast(e.message, "err"); })
+            .then(function () { updateBanner(); health(); draw(); if (reload) reload(); });
+        });
+      }
+      box.appendChild(row);
+    });
+  }
+  draw();
+  return box;
+}
+function updateModel(m, bt) {
+  if (streaming || compacting || switching || agent) return toast(busyMsg());
+  bt.disabled = true; bt.textContent = "Checking…";
+  fetch("/api/pull", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: m.id, update: true }) }).then(function (r) {
+    if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { throw new Error(j.error || "the check failed"); });
+    var reader = r.body.getReader(), dec = new TextDecoder(), buf = "", failed = null, ok = false, moved = 0;
+    function handle(l) {
+      var ev; try { ev = JSON.parse(l); } catch (e) { return; }
+      if (ev.error) failed = ev.error;
+      if (ev.total && ev.completed < ev.total) { moved = Math.max(moved, ev.total); bt.textContent = "Downloading… " + Math.round((ev.completed || 0) / ev.total * 100) + "%"; }
+      if (ev.status === "success") ok = true;
+    }
+    function pump() {
+      return reader.read().then(function (res) {
+        if (res.done) { buf += dec.decode(); if (buf.trim()) handle(buf); if (failed) throw new Error(failed); if (!ok) throw new Error("it stopped early. Try again."); return moved; }
+        buf += dec.decode(res.value, { stream: true });
+        var lines = buf.split("\n"); buf = lines.pop(); lines.forEach(handle);
+        return pump();
+      });
+    }
+    return pump();
+  }).then(function (moved) { toast(moved > 50e6 ? m.label + " was updated to the newest version" : m.label + " is already the newest version"); return refreshModels(); })
+    .catch(function (e) { toast("Couldn't check " + m.label + ": " + (/Failed to fetch|Load failed|NetworkError/i.test(e.message) ? "no connection" : e.message), "err"); })
+    .then(function () { bt.disabled = false; bt.textContent = "Check for a newer version"; });
+}
+/* ---------- check my app ---------- */
+function runSelfCheck(bt, box) {
+  bt.disabled = true; bt.textContent = "Checking… (up to a minute)";
+  api("GET", "/api/selfcheck", undefined, 240000).then(function (j) {
+    box.hidden = false; box.textContent = "";
+    var bad = 0, warn = 0;
+    j.checks.forEach(function (c) {
+      var mark = document.createElement("span"), name = document.createElement("span"), det = document.createElement("span");
+      mark.textContent = c.ok ? "✓" : c.warn ? "!" : "✕"; mark.className = c.ok ? "ok" : c.warn ? "warn" : "bad";
+      if (!c.ok) { if (c.warn) warn++; else bad++; }
+      name.textContent = c.name; det.textContent = c.detail;
+      box.appendChild(mark); box.appendChild(name); box.appendChild(det);
+    });
+    toast(bad ? bad + (bad === 1 ? " problem found" : " problems found") + ". See the list." : warn ? "Everything needed works. " + warn + (warn === 1 ? " optional part is" : " optional parts are") + " off or missing." : "Everything works", bad ? "err" : "");
+  }).catch(function (e) { toast("Couldn't run the check: " + e.message, "err"); })
+    .then(function () { bt.disabled = false; bt.textContent = "Check my app"; });
 }
 function fmtBytes(n) { n = n || 0; return n >= 1e9 ? (n / 1e9).toFixed(1) + " GB" : n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : n >= 1e3 ? Math.round(n / 1e3) + " KB" : n + " B"; }
 function storageSection() {
@@ -3003,6 +3428,7 @@ function storageSection() {
       line(kv, "Photos", fmtBytes(j.images.bytes) + " · " + j.images.count);
       line(kv, "Audio clips", fmtBytes(j.audio.bytes) + " · " + j.audio.count);
       line(kv, "Documents", fmtBytes(j.docs.bytes) + " · " + j.docs.count);
+      if (j.trash) line(kv, "Recently deleted", fmtBytes(j.trash.bytes) + " · " + j.trash.count + (j.trash.count === 1 ? " chat" : " chats"));
       line(kv, "Logs", fmtBytes(j.logs.bytes) + (j.logs.old_bytes ? " (" + fmtBytes(j.logs.old_bytes) + " old)" : ""));
       line(kv, "Unused attachments", j.unused.known ? fmtBytes(j.unused.bytes) + " · " + j.unused.count + " (from messages never sent, over an hour old)" : "can't tell (a chat file is damaged)");
       line(kv, "Free disk space", fmtBytes(j.disk.free) + " of " + fmtBytes(j.disk.total));
@@ -3013,6 +3439,7 @@ function storageSection() {
     api("POST", "/api/storage/clean", { what: what }).then(function (j) { toast("Deleted " + j.removed + (j.removed === 1 ? " file" : " files")); load(); })
       .catch(function (e) { toast(e.message, "err"); }).finally(function () { btn.disabled = false; });
   }
+  sec.appendChild(modelRows(load));
   sec.querySelector("#cleanUnused").onclick = function (e) { clean("unused", e.currentTarget); };
   sec.querySelector("#cleanLogs").onclick = function (e) { clean("logs", e.currentTarget); };
   load();
@@ -3157,7 +3584,7 @@ function chatArtifacts() {
   if (!cur) return out;
   var vers = appVers(cur), curV = appCurIndex(cur);
   vers.forEach(function (v, i) {
-    out.push({ icon: "A", title: (cur.appName || v.title || "App") , sub: "App, version " + (i + 1) + " of " + vers.length + (i === vers.length - 1 ? " (latest)" : ""),
+    out.push({ icon: "A", title: (cur.appName || v.title || "App") , sub: "App",
       on: art.open && art.kind === "html" && art.ver === i, open: function () { showAppVersion(cur, i); } });
   });
   var n = 0;
@@ -3184,7 +3611,7 @@ function updateArtListBtn() {
 }
 function openArtListMenu() {
   var box = $("#artListMenu"), list = chatArtifacts(); box.innerHTML = "";
-  if (!list.length) { box.innerHTML = '<p class="rail-note" style="padding:10px 12px;margin:0">No apps or previews in this chat yet.</p>'; }
+  if (!list.length) { box.innerHTML = '<p class="rail-note art-empty">No apps or previews in this chat yet.</p>'; }
   var apps = list.filter(function (a) { return a.icon === "A"; }).reverse(), rest = list.filter(function (a) { return a.icon !== "A"; }).reverse();
   apps.concat(rest).forEach(function (a) {                       // apps first, newest first; then drawings and scripts, newest first
     var r = document.createElement("button"); r.className = "model-row" + (a.on ? " on" : "");
@@ -3273,7 +3700,7 @@ function send() {
   cancelDictation(); stopSpeaking();
   inp.value = ""; autosize();
   pending = []; renderAttach();
-  var rem = !autoText && S.memory_on && text.match(REMEMBER_RE);
+  var rem = !autoText && S.memory_on && !cur.private && text.match(REMEMBER_RE);
   if (rem) addMemory(rem[1].trim());
   var t = cur;
   var proceed = function () {
@@ -3370,7 +3797,7 @@ function runDraw(t, prompt, src, plan, asked) {
     return d;
   });
   H.warming = "picture"; updateStatus();
-  planned.then(function (p) { return post("/api/imagine", src ? { prompt: p, edit: src } : { prompt: p }); })
+  planned.then(function (p) { var bd = src ? { prompt: p, edit: src } : { prompt: p }; if (t.private) bd.private = true; return post("/api/imagine", bd); })
     .then(function (j) {
       m.content = src ? "Here's the changed picture. The original is still above." : m.asked ? "Here's your picture. Based on the chat, I drew:\n\n> " + m.prompt : "Here's your picture.";
       m.att = [{ kind: "image", id: j.id, name: "Picture.jpg" }];
@@ -3403,6 +3830,7 @@ function savePicture(id) {
     .catch(function (e) { toast("Couldn't save the picture: " + e.message, "err"); });
 }
 function renderListOptimistic(t) {
+  if (t.private) return renderList();
   if (!threads.some(function (x) { return x.id === t.id; })) threads.unshift({ id: t.id, title: t.title, updated: Date.now(), count: 1, model: t.model });
   renderList();
 }
@@ -3537,7 +3965,8 @@ function generate(t) {
     }
     if (!m.content && !m.error && !m.stopped) m.error = "The model returned an empty reply. Try again" + (S.num_predict > 0 ? ", or raise the max reply length." : ".");
     if (!m.content && m.stopped && !m.thinking) { t.messages.pop(); if (carry) t.messages.push(answerFromCarry(carry)); }
-    else if (carry) { m.alts = carry.alts.concat([snapAnswer(m)]).slice(-10); m.alt = m.alts.length - 1; }   // keep the last 10 tries
+    else if (carry) { m.alts = carry.alts.concat([snapAnswer(m)]).slice(-10); m.alt = m.alts.length - 1; if (t._cmp && m.content) m.compare = true; }   // keep the last 10 tries
+    t._cmp = false;
     streaming = false; streamThread = null; controller = null; setSendState(); renderList();
     rerenderAfterStream = false;
     if (t === cur) renderThread(true);

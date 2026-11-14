@@ -26,9 +26,9 @@ import PDFKit
 import Vision
 import AppKit
 
-let maxPages = 300                 // pages past this are not read
+let maxPages = 1000                // pages past this are not read
 let renderLongSide: CGFloat = 2600 // pixels for the careful text recognition pass
-let maxChars = 2_000_000           // stop collecting text past this (the app keeps 400k)
+let maxChars = 2_000_000           // stop collecting text past this (the app keeps 2M)
 
 func emit(_ obj: [String: Any]) -> Never {
     guard let data = try? JSONSerialization.data(withJSONObject: obj) else { exit(2) }

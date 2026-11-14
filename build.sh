@@ -14,7 +14,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 swiftc -O -target arm64-apple-macos13.0 "$SRC/main.swift" -o "$TMP/LocalAI" -module-cache-path "$TMP/mc" \
-  -framework Cocoa -framework WebKit -framework Speech -framework AVFoundation -framework PDFKit -framework LocalAuthentication
+  -framework Cocoa -framework WebKit -framework Speech -framework AVFoundation -framework PDFKit -framework LocalAuthentication -framework Carbon
 swiftc -O -target arm64-apple-macos13.0 "$SRC/pdftext.swift" -o "$TMP/pdftext" -module-cache-path "$TMP/mc" -framework PDFKit -framework Vision -framework AppKit
 # Check the plist and the Python files too, so a broken one never ships.
 plutil -lint -s "$SRC/Info.plist"

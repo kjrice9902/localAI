@@ -21,6 +21,7 @@ import UniformTypeIdentifiers
 import PDFKit
 import CryptoKit
 import LocalAuthentication
+import Carbon.HIToolbox
 
 let appName = "Local AI"
 
@@ -325,6 +326,14 @@ final class PDFExporter: NSObject, WKNavigationDelegate {
 // MARK: - Web view with a right-click menu the app controls
 // WebKit's own "Download Image" starts a download the app never hears about,
 // so nothing happens. The picture items are pointed at the app's own save instead.
+// The small "quick ask" box. It takes typing without bringing the whole app forward,
+// and goes away when you press Esc or click somewhere else.
+final class QuickPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override func cancelOperation(_ sender: Any?) { orderOut(nil) }
+    override func resignKey() { super.resignKey(); orderOut(nil) }
+}
+
 final class AppWebView: WKWebView {
     var onMenu: ((NSMenu) -> Void)?
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
@@ -365,6 +374,110 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         startServer()
         waitForServer(attempt: 0)
         NSApp.activate(ignoringOtherApps: true)
+        if quickAskEnabled() { setQuickAsk(true) }
+    }
+
+    // MARK: quick ask (Control-Option-A from any app, while Local AI is open)
+    var hotKeyRef: EventHotKeyRef?
+    var hotKeyHandler: EventHandlerRef?
+    var quickPanel: QuickPanel?
+    var quickField: NSTextField?
+
+    func quickAskEnabled() -> Bool {
+        let file = supportDir.appendingPathComponent("settings.json")
+        guard let data = try? Data(contentsOf: file),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return true }   // first run: on, like the default
+        return obj["quick_ask"] as? Bool ?? true
+    }
+
+    func setQuickAsk(_ on: Bool) {
+        if !on {
+            if let ref = hotKeyRef { UnregisterEventHotKey(ref); hotKeyRef = nil }
+            quickPanel?.orderOut(nil)
+            return
+        }
+        guard hotKeyRef == nil else { return }
+        if hotKeyHandler == nil {
+            var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+            InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
+                DispatchQueue.main.async { (NSApp.delegate as? AppDelegate)?.toggleQuickAsk() }
+                return noErr
+            }, 1, &spec, nil, &hotKeyHandler)
+        }
+        // If another app already owns this shortcut, macOS says no and nothing happens: the app works as before.
+        let id = EventHotKeyID(signature: OSType(0x4C414951), id: 1)       // "LAIQ"
+        RegisterEventHotKey(UInt32(kVK_ANSI_A), UInt32(controlKey | optionKey), id, GetApplicationEventTarget(), 0, &hotKeyRef)
+    }
+
+    func toggleQuickAsk() {
+        if let p = quickPanel, p.isVisible { p.orderOut(nil); return }
+        // Locked, still starting, or showing an error: just bring the app forward.
+        guard loaded, lockView == nil, !blocked else {
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+        if quickPanel == nil {
+            let p = QuickPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 58),
+                               styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel], backing: .buffered, defer: false)
+            p.titleVisibility = .hidden
+            p.titlebarAppearsTransparent = true
+            p.isMovableByWindowBackground = true
+            p.level = .floating
+            p.isFloatingPanel = true
+            p.hidesOnDeactivate = false
+            p.isReleasedWhenClosed = false
+            p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            p.standardWindowButton(.closeButton)?.isHidden = true
+            p.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            p.standardWindowButton(.zoomButton)?.isHidden = true
+            let f = NSTextField(frame: NSRect(x: 16, y: 13, width: 588, height: 30))
+            f.placeholderString = "Ask Local AI…   Return sends it, Esc closes"
+            f.font = .systemFont(ofSize: 19)
+            f.isBordered = false
+            f.drawsBackground = false
+            f.focusRingType = .none
+            f.usesSingleLineMode = true
+            f.cell?.isScrollable = true
+            f.target = self
+            f.action = #selector(quickAskSubmit(_:))
+            f.autoresizingMask = [.width]
+            p.contentView?.addSubview(f)
+            quickPanel = p
+            quickField = f
+        }
+        guard let p = quickPanel, let f = quickField else { return }
+        f.stringValue = ""
+        let screen = NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main
+        if let vf = screen?.visibleFrame {
+            p.setFrameOrigin(NSPoint(x: vf.midX - p.frame.width / 2, y: vf.minY + vf.height * 0.68))
+        }
+        p.makeKeyAndOrderFront(nil)
+        p.makeFirstResponder(f)
+    }
+
+    @objc func quickAskSubmit(_ sender: Any?) {
+        let text = String((quickField?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(20000))
+        quickPanel?.orderOut(nil)
+        guard !text.isEmpty, loaded, lockView == nil, !blocked else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        emit(["type": "quickAsk", "text": text])
+    }
+
+    // The folder for automatic backups: picked here, in a real folder panel, never typed by the page.
+    func pickBackupFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use This Folder"
+        panel.message = "Pick the folder where Local AI puts its automatic backups"
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url else { return }
+            self.emit(["type": "folder", "path": url.path])
+        }
     }
 
     // The app used to be called Qwen Local; carry its models, settings and
@@ -1016,6 +1129,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             speaker.stop()
         case "backup":
             saveBackup()
+        case "pickFolder":
+            pickBackupFolder()
+        case "quickAsk":
+            setQuickAsk(body["on"] as? Bool ?? false)
         case "ctxImage":      // the page says which of its pictures was just right-clicked ("" = none)
             let id = body["id"] as? String ?? ""
             contextImageId = (id.count == 16 && id.allSatisfy({ $0.isASCII && $0.isHexDigit && !$0.isUppercase })) ? id : nil

@@ -132,6 +132,7 @@ Everything the app creates is stored on your Mac, never in this repo:
   settings.json     your settings
   threads/          your chats (one .json file each)
   images/ docs/ audio/   pictures, documents and clips you added
+  trash/            chats you deleted (kept 30 days, then erased)
   models/           chat models (step 3)
   imagegen/         picture models + their Python (step 4)
   pyenv/            code sandbox libraries (step 5)
@@ -146,6 +147,11 @@ The `Library` folder is hidden. In Finder, press **Cmd+Shift+G** and paste
   That saves one zip with your chats, settings and attachments, without the
   models. On the other Mac use **Restore…** in the same place. Every file is
   checked again when it's restored.
+- **Automatic backups:** in the same place you can pick a folder (an external
+  drive is best), a schedule (every day or week) and a password. With a password
+  each backup is a locked `.localaibackup` file (AES-256, sealed with
+  HMAC-SHA256); **Restore…** asks for the password. A forgotten password cannot
+  be recovered.
 - **Or copy the whole folder:** quit the app, copy
   `~/Library/Application Support/LocalAI` to a drive, and put it back at exactly
   the same path on the other Mac. That includes the models (about 26 GB). The
