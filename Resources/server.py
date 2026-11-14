@@ -291,6 +291,7 @@ FILE_GUARD = (
 )
 MAX_AUDIO_SECONDS = 600                           # 10 minutes (~15k tokens for Gemma)
 MAX_UPLOAD_BYTES = 400 * 1024 * 1024
+MEMORY_MAX_CHARS = 4000      # one saved memory (about 600 words); every memory goes into every chat
 MAX_MEDIA_PER_REQUEST = 96 * 1024 * 1024          # base64 bytes of photos + clips in one chat request (6 photos + 3 ten-minute clips fit)
 KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
 
@@ -501,7 +502,7 @@ def clean_settings(raw, base=None):
                         mid = str(item.get("id") or secrets.token_hex(6))[:24]
                         ts = item.get("ts") if isinstance(item.get("ts"), (int, float)) else 0
                         out["memories"].append({"id": re.sub(r"[^a-z0-9-]", "", mid.lower()) or secrets.token_hex(6),
-                                                "text": item["text"].strip()[:600], "ts": ts})
+                                                "text": item["text"].strip()[:MEMORY_MAX_CHARS], "ts": ts})
             continue
         if key == "rail":
             if isinstance(val, dict):

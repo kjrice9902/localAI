@@ -360,8 +360,16 @@ details.think .tbody { padding: 0 14px 12px; font-size: .84em; color: var(--mute
 .artlist-menu { width: 290px; max-height: 60vh; overflow-y: auto; }
 .artlist-menu .model-row.on b::after { content: " · open"; font-weight: 500; color: var(--a2); }
 .mem-add { display: flex; gap: 8px; }
-.mem-add input { flex: 1; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border2); background: var(--bg2); outline: none; font-size: 13.5px; }
-.mem-add input:focus { border-color: var(--a1); }
+.mem-add { align-items: flex-start; }
+.mem-add textarea, .mem-edit { flex: 1; min-height: 72px; max-height: 420px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border2); background: var(--bg2); outline: none; font: inherit; font-size: 13.5px; line-height: 1.45; color: var(--text); resize: vertical; }
+.mem-add textarea:focus, .mem-edit:focus { border-color: var(--a1); }
+.mem-count { font-size: 11.5px; color: var(--faint); min-height: 14px; }
+.mem-item span { white-space: pre-wrap; }
+.mem-item.editing { flex-direction: column; align-items: stretch; }
+.mem-edit { width: 100%; box-sizing: border-box; flex: none; }
+.mbody .mem-add textarea, .mbody .mem-edit { min-height: 110px; }
+.mem-edit-bar { display: flex; align-items: center; gap: 8px; }
+.mem-edit-bar small { flex: 1; color: var(--faint); font-size: 11.5px; }
 .mem-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .mem-item { display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px; border-radius: 10px; background: var(--hover); border: 1px solid var(--border); font-size: 13px; line-height: 1.45; }
 .mem-item span { flex: 1; min-width: 0; word-wrap: break-word; }
@@ -2223,9 +2231,9 @@ var SECTIONS = [
   ] },
   { id: "memory", label: "Memory", lead: "Keeps long threads going without running out of room.", items: [
     { k: "autocompact_pct", type: "range", label: "Auto-compact", desc: "When a thread fills this much of the context window, older messages are folded into a summary the model keeps reading. Applies to every thread and model. You can still scroll back and see everything.", min: 20, max: 95, step: 5, fmt: function (v) { return v + "% · " + fmtK(ctx() * v / 100); } },
-    { k: "memory_on", type: "toggle", label: "Remember things across chats", desc: "Saved memories go to the model at the start of every chat. Add them below, click the bookmark under any of your messages, or start a message with “Remember that…”." },
+    { k: "memory_on", type: "toggle", label: "Remember things across chats", desc: "Turns saved memories on or off (custom instructions always stay on). Add memories below, click the bookmark under any of your messages, or start a message with “Remember that…”." },
+    { k: "system_prompt", type: "textarea", label: "Custom instructions", desc: "Rules the model always follows, in every chat and with every model: how to answer (length, tone, plain words, format) and anything it must always keep in mind. Sent first, before everything else. Up to 20,000 characters." },
     { type: "memories" },
-    { k: "system_prompt", type: "textarea", label: "Custom instructions", desc: "Sent at the start of every thread, to every model. Tell it who you are and how to answer." },
     { type: "button", label: "Compact this thread now", desc: "Fold everything except the last exchange into memory.", btn: "Compact now", action: function () { if (streaming || compacting || switching) return toast(busyMsg()); if (cur && cur.messages.length > 2) compact(cur, true); else toast("Nothing to compact yet"); } }
   ] },
   { id: "prompts", label: "Prompts", lead: "Saved prompts you reuse. Type / in the message box, then the name, and press Enter to drop the prompt in.", items: [{ type: "prompts" }] },
@@ -3104,8 +3112,20 @@ function refreshSpeak() {
 /* ---------- memory across chats ---------- */
 var REMEMBER_RE = /^\s*(?:please\s+)?remember(?:\s+that|\s*:|,)?\s*(.{3,300}?)(?:\.(?=\s|$)|[!?\n]|$)/i;   // "remember that X. ..." saves X (first sentence; 3.14 stays whole)
 function memList() { return S && Array.isArray(S.memories) ? S.memories : []; }
+var MEM_MAX = 4000;   // one saved memory; the server keeps the same limit
+function cleanMemText(text) {
+  // Keeps your line breaks (lists, steps); squeezes extra spaces and blank lines.
+  return String(text || "").replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, MEM_MAX);
+}
+function updateMemory(id, text) {
+  text = cleanMemText(text);
+  if (!text) return removeMemory(id);
+  S.memories = memList().map(function (m) { return m.id === id ? { id: m.id, text: text, ts: m.ts } : m; });
+  pushSettings(); toast("Memory updated");
+  if ($("#modalBg").classList.contains("show") && tab === "memory") renderSection();
+}
 function addMemory(text, quiet) {
-  text = String(text || "").replace(/\s+/g, " ").trim().slice(0, 600);
+  text = cleanMemText(text);
   if (!text) return;
   if (memList().some(function (m) { return m.text.toLowerCase() === text.toLowerCase(); })) { if (!quiet) toast("Already in memory"); return; }
   S.memories = memList().concat([{ id: uid().replace(/[^a-z0-9-]/g, ""), text: text, ts: Date.now() }]);
@@ -3119,21 +3139,41 @@ function removeMemory(id) {
 }
 function memoriesSection() {
   var sec = document.createElement("div"); sec.className = "row stack";
-  sec.innerHTML = '<div class="lbl"><b>Saved memories</b><small>Short facts about you, your projects and how you like answers. ' + memList().length + ' saved.</small></div>' +
-    '<div class="mem-add"><input id="memInput" placeholder="e.g. I\'m in nursing school and my exams are in December" maxlength="600"><button class="btn primary" id="memAddBtn">Add</button></div><div class="mem-list" id="memListBox"></div>';
+  sec.innerHTML = '<div class="lbl"><b>Saved memories</b><small>Facts the model uses when they matter: your projects, dates, people, what you\'re working on. It\'s told to use them only when relevant, so put rules about <i>how</i> to answer in Custom instructions above. Up to ' + MEM_MAX.toLocaleString() + ' characters each. ' + memList().length + ' saved.</small></div>' +
+    '<div class="mem-add"><textarea id="memInput" rows="3" placeholder="e.g. I\'m in nursing school and my exams are in December" maxlength="' + MEM_MAX + '"></textarea><button class="btn primary" id="memAddBtn">Add</button></div>' +
+    '<div class="mem-count" id="memCount"></div><div class="mem-list" id="memListBox"></div>';
   var list = sec.querySelector("#memListBox");
   if (!memList().length) list.innerHTML = '<div class="mem-empty">Nothing saved yet.</div>';
   memList().slice().reverse().forEach(function (m) {
     var it = document.createElement("div"); it.className = "mem-item";
-    it.innerHTML = '<span></span><button class="icon-btn" title="Forget this">' + ICON.trash + "</button>";
+    it.innerHTML = '<span></span><button class="icon-btn" data-a="edit" title="Edit this">' + ICON.pencil + '</button><button class="icon-btn" data-a="del" title="Forget this">' + ICON.trash + "</button>";
     it.querySelector("span").textContent = m.text;
-    it.querySelector("button").onclick = function () { removeMemory(m.id); };
+    it.querySelector('[data-a="del"]').onclick = function () { removeMemory(m.id); };
+    it.querySelector('[data-a="edit"]').onclick = function () {
+      // Edit in place: a big box with Save / Cancel. Cmd+Enter saves, Esc cancels.
+      it.className = "mem-item editing"; it.innerHTML = "";
+      var ta = document.createElement("textarea"); ta.className = "mem-edit"; ta.maxLength = MEM_MAX; ta.value = m.text;
+      var bar = document.createElement("div"); bar.className = "mem-edit-bar";
+      bar.innerHTML = '<small></small><button class="btn" data-a="cancel">Cancel</button><button class="btn primary" data-a="save">Save</button>';
+      function count() { bar.querySelector("small").textContent = ta.value.length + " / " + MEM_MAX; grow(ta); }
+      bar.querySelector('[data-a="save"]').onclick = function () { updateMemory(m.id, ta.value); };
+      bar.querySelector('[data-a="cancel"]').onclick = function () { renderSection(); };
+      ta.oninput = count;
+      ta.onkeydown = function (e) {
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); updateMemory(m.id, ta.value); }
+        else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); renderSection(); }
+      };
+      it.appendChild(ta); it.appendChild(bar); count(); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+    };
     list.appendChild(it);
   });
-  var inp = sec.querySelector("#memInput");
-  function add() { if (inp.value.trim()) { addMemory(inp.value); inp.value = ""; } }
+  var inp = sec.querySelector("#memInput"), cnt = sec.querySelector("#memCount");
+  function grow(el) { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight + 2, 420) + "px"; }
+  function showCount() { cnt.textContent = inp.value.length ? inp.value.length + " / " + MEM_MAX + " characters · Cmd+Enter to add" : ""; grow(inp); }
+  function add() { if (inp.value.trim()) { addMemory(inp.value); inp.value = ""; showCount(); } }
   sec.querySelector("#memAddBtn").onclick = add;
-  inp.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); add(); } };
+  inp.oninput = showCount;
+  inp.onkeydown = function (e) { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); add(); } };
   return sec;
 }
 
