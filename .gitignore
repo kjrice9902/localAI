@@ -1,0 +1,14 @@
+# Allowlist: only the app's source and setup files go to GitHub.
+# Everything else in this folder (personal notes, audit reports, scratch tools,
+# test images, Finder files) stays on this Mac.
+/*
+!/.gitignore
+!/README.md
+!/main.swift
+!/pdftext.swift
+!/icon.swift
+!/build.sh
+!/Info.plist
+!/Resources/
+!/setup/
+.DS_Store
