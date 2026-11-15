@@ -381,7 +381,8 @@ details.think .tbody { padding: 0 14px 12px; font-size: .84em; color: var(--mute
 .drawing { display: inline-flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 14px; border: 1px dashed var(--border2); color: var(--muted); }
 .drawing .secs { font-variant-numeric: tabular-nums; color: var(--faint); }
 .adoc { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--border2); background: var(--hover); margin-bottom: 6px; max-width: 320px; font-size: 13px; }
-.adoc b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.adoc > div { flex: 1; min-width: 0; }      /* lets the text shrink to the card instead of running past it */
+.adoc b { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-weight: 600; overflow: hidden; overflow-wrap: anywhere; }
 .adoc small { color: var(--muted); font-size: 11.5px; }
 .adoc svg { flex: none; color: var(--a1); }
 .icon-btn.spk.on { color: var(--a1); background: var(--active); }
@@ -634,7 +635,7 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 .run-item pre { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--code-bg); border: 1px solid var(--border); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); max-height: 160px; overflow: auto; }
 .run-item pre.out { opacity: .75; }
 .asrc { display: flex; flex-direction: column; gap: 2px; margin-top: 5px; font-size: 12px; }
-.asrc a.lnk { color: var(--a2); cursor: pointer; text-decoration: underline; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
+.asrc a.lnk { color: var(--a2); cursor: pointer; text-decoration: underline; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .runout .aimg.chart { display: block; max-width: calc(100% - 24px); margin: 4px 12px 12px; border-radius: 8px; background: #fff; }
 .msg.user.autorun .bubble { font-size: 12px; opacity: .75; cursor: pointer; padding: 5px 11px; white-space: pre-wrap; }
 .msg.user.autorun.open .bubble { opacity: 1; font-family: var(--mono); max-height: 320px; overflow: auto; }
@@ -3010,7 +3011,7 @@ function msgEl(m, idx, live) {
       } else if (a.kind === "doc") {
         c = document.createElement("div"); c.className = "adoc";
         c.innerHTML = ICON.doc + "<div><b></b><small></small></div>";
-        c.querySelector("b").textContent = a.name; c.querySelector("small").textContent = a.web ? "Web search results" : docInfo(a);
+        c.querySelector("b").textContent = a.name; c.querySelector("b").title = a.name; c.querySelector("small").textContent = a.web ? "Web search results" : docInfo(a);
         if (a.sources && a.sources.length) {
           var sl = document.createElement("div"); sl.className = "asrc";
           a.sources.slice(0, 6).forEach(function (s0) { var l = document.createElement("a"); l.className = "lnk"; l.title = String(s0.url || ""); l.textContent = "[" + s0.n + "] " + String(s0.title || s0.url || "").slice(0, 70); sl.appendChild(l); });
