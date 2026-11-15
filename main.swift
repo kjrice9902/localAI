@@ -79,6 +79,8 @@ final class Dictation {
     private var lastChange = Date()
     private var active = false
     private var wanted = false   // false once the page asked to stop, even mid-startup
+    private var tapOn = false    // removing a tap that isn't there is not safe on every macOS
+    private func removeTap() { if tapOn { engine.inputNode.removeTap(onBus: 0); tapOn = false } }
     private var generation = 0   // bumps per session; callbacks from an older session are ignored
     var onEvent: ([String: Any]) -> Void = { _ in }
 
@@ -129,6 +131,7 @@ final class Dictation {
             return
         }
         input.installTap(onBus: 0, bufferSize: 1024, format: fmt) { buffer, _ in req.append(buffer) }
+        tapOn = true
         engine.prepare()
         do { try engine.start() } catch {
             cleanup()
@@ -166,7 +169,7 @@ final class Dictation {
         }
         wanted = false
         silenceTimer?.invalidate(); silenceTimer = nil
-        engine.inputNode.removeTap(onBus: 0)
+        removeTap()
         if engine.isRunning { engine.stop() }
         request?.endAudio()
         stopTimer?.invalidate()
@@ -184,7 +187,7 @@ final class Dictation {
     private func cleanup() {
         silenceTimer?.invalidate(); silenceTimer = nil
         stopTimer?.invalidate(); stopTimer = nil
-        engine.inputNode.removeTap(onBus: 0)
+        removeTap()
         if engine.isRunning { engine.stop() }
         task?.cancel(); task = nil
         request = nil
@@ -240,7 +243,12 @@ final class PDFExporter: NSObject, WKNavigationDelegate {
         let v = WKWebView(frame: NSRect(x: 0, y: 0, width: Self.pageW, height: Self.pageH), configuration: cfg)
         v.navigationDelegate = self
         view = v
-        v.loadHTMLString(html, baseURL: nil)
+        // No pictures, styles or fonts from the internet or the disk: only what is inside the page.
+        let csp = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:\">"
+        var page = html
+        if let r = page.range(of: "<head[^>]*>", options: [.regularExpression, .caseInsensitive]) { page.insert(contentsOf: csp, at: r.upperBound) }
+        else { page = csp + page }
+        v.loadHTMLString(page, baseURL: nil)
         // A load that never finishes (crashed web process, enormous chat) still ends with a message.
         DispatchQueue.main.asyncAfter(deadline: .now() + 180) { [weak self] in
             self?.finish(false, "it took too long (the chat may be too big to export in one go)")
@@ -408,7 +416,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
         // If another app already owns this shortcut, macOS says no and nothing happens: the app works as before.
         let id = EventHotKeyID(signature: OSType(0x4C414951), id: 1)       // "LAIQ"
-        RegisterEventHotKey(UInt32(kVK_ANSI_A), UInt32(controlKey | optionKey), id, GetApplicationEventTarget(), 0, &hotKeyRef)
+        let st = RegisterEventHotKey(UInt32(kVK_ANSI_A), UInt32(controlKey | optionKey), id, GetApplicationEventTarget(), 0, &hotKeyRef)
+        if st != noErr {
+            hotKeyRef = nil
+            NSLog("LocalAI: Control-Option-A is taken by another app (%d)", Int(st))
+            emit(["type": "note", "err": true, "message": "Quick ask (Control-Option-A) couldn't start: another app already uses that shortcut."])
+        }
     }
 
     func toggleQuickAsk() {
@@ -480,7 +493,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                               : "Pick the folder where Local AI puts its automatic backups"
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
-            self.emit(["type": "folder", "path": url.path])
+            self.emit(["type": "folder", "path": url.path, "for": watch ? "watch" : "backup"])
         }
     }
 
@@ -754,7 +767,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let head = [UInt8](h.readData(ofLength: 4))
             try? h.close()
             if machO.contains(head) {
-                if Self.runQuiet("/usr/bin/codesign", ["--verify", "--strict", "-R=" + Self.engineRule, f.path]).0 != 0 {
+                if Self.runQuiet("/usr/bin/codesign", ["--verify", "--strict", "-R=" + Self.engineRule, f.path], seconds: 10).0 != 0 {
                     NSLog("LocalAI: installed engine failed its signature check (%@); using the built-in one", f.lastPathComponent)
                     return nil
                 }
@@ -935,7 +948,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         guard !blocked else { return }
         guard let cookie = HTTPCookie(properties: [
             .domain: "127.0.0.1", .path: "/", .name: "localai", .value: sessionToken,
-            HTTPCookiePropertyKey("HttpOnly"): "TRUE", .sameSitePolicy: "Strict",
+            HTTPCookiePropertyKey("HttpOnly"): "TRUE", .sameSitePolicy: HTTPCookieStringPolicy.sameSiteStrict.rawValue,
         ]) else { return showError("Couldn't set up the session.") }
         webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) {
             self.webView.load(URLRequest(url: URL(string: "http://127.0.0.1:\(uiPort)/")!))
@@ -1450,7 +1463,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let hash = lstartHash(me)
         // $0 = bundle path, $1 = our pid, $2 = a hash of our start time (or empty): the helper
         // waits while that pid is alive AND still the same process, then opens the app again.
-        p.arguments = ["-c", "while kill -0 \"$1\" 2>/dev/null && { [ -z \"$2\" ] || [ \"$(ps -o lstart= -p \"$1\" | md5)\" = \"$2\" ]; }; do sleep 0.2; done; sleep 0.5; /usr/bin/open \"$0\"",
+        p.arguments = ["-c", "while kill -0 \"$1\" 2>/dev/null && { [ -z \"$2\" ] || [ \"$(/bin/ps -o lstart= -p \"$1\" | /sbin/md5)\" = \"$2\" ]; }; do /bin/sleep 0.2; done; /bin/sleep 0.5; /usr/bin/open \"$0\"",
                        Bundle.main.bundlePath, String(me), hash]
         do { try p.run() } catch {
             // Without the helper the app would just quit and not come back: stay open instead.
@@ -1463,10 +1476,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func lstartHash(_ pid: pid_t) -> String {
         let t = Process()
         t.executableURL = URL(fileURLWithPath: "/bin/sh")
-        t.arguments = ["-c", "ps -o lstart= -p \"$0\" | md5", String(pid)]
+        t.arguments = ["-c", "/bin/ps -o lstart= -p \"$0\" | /sbin/md5", String(pid)]
         let pipe = Pipe()
         t.standardOutput = pipe
-        try? t.run()
+        guard (try? t.run()) != nil else { return "" }      // waiting on a process that never started would crash
         t.waitUntilExit()
         return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }

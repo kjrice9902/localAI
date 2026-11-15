@@ -11,12 +11,12 @@ func c(_ hex: UInt32, _ a: CGFloat = 1) -> NSColor {
             blue: CGFloat(hex & 0xff) / 255, alpha: a)
 }
 
-let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8,
+guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8,
                            samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                           colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+                           colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { fputs("couldn't make the drawing surface\n", stderr); exit(1) }
 rep.size = NSSize(width: px, height: px)
 NSGraphicsContext.saveGraphicsState()
-let gctx = NSGraphicsContext(bitmapImageRep: rep)!
+guard let gctx = NSGraphicsContext(bitmapImageRep: rep) else { fputs("couldn't start drawing\n", stderr); exit(1) }
 NSGraphicsContext.current = gctx
 let cg = gctx.cgContext
 cg.clear(CGRect(x: 0, y: 0, width: px, height: px))
@@ -87,6 +87,6 @@ NSGradient(colors: [c(0x000000, 0), c(0x000000, 0.28)])!
 cg.restoreGState()
 
 NSGraphicsContext.restoreGraphicsState()
-let png = rep.representation(using: .png, properties: [:])!
-try! png.write(to: URL(fileURLWithPath: out))
+guard let png = rep.representation(using: .png, properties: [:]) else { fputs("couldn't make the PNG\n", stderr); exit(1) }
+do { try png.write(to: URL(fileURLWithPath: out)) } catch { fputs("couldn't write \(out): \(error.localizedDescription)\n", stderr); exit(1) }
 print("wrote \(out)")

@@ -775,7 +775,9 @@ function api(method, path, body, ms) {
   var opt = { method: method, cache: "no-store", headers: {}, signal: ac.signal };
   if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
   return fetch(path, opt).then(function (r) {
-    return r.json().catch(function () { return {}; }).then(function (j) {
+    return r.text().then(function (txt) {
+      var j = {};
+      if (txt) { try { j = JSON.parse(txt); } catch (e) { if (r.ok) throw new Error("the app sent back something it shouldn't have"); } }
       if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
       return j;
     });
@@ -886,7 +888,7 @@ window.__localaiEvent = function (ev) {
   if (ev.type === "quickAsk") { quickAsk(ev.text); return; }
   if (ev.type === "askText") { askAbout(ev.text); return; }
   if (ev.type === "loginItem") { if (S && !!S.open_at_login !== !!ev.on) { S.open_at_login = !!ev.on; pushSettings(); if ($("#modalBg").classList.contains("show")) renderSection(); } return; }
-  if (ev.type === "folder") { var fw = folderWaiter; folderWaiter = null; if (fw && typeof ev.path === "string" && ev.path) fw(ev.path); return; }
+  if (ev.type === "folder") { var fw = folderWaiter; if (!fw || fw.for !== (ev["for"] === "watch" ? "watch" : "backup")) return; folderWaiter = null; if (typeof ev.path === "string" && ev.path) fw.fn(ev.path); return; }   // each answer goes only to the picker that asked
   if (ev.type === "speech") { if (ev.state === "end" && ev.id === speakingId) { speakingId = null; refreshSpeak(); renderRail(); voiceListenAgain(); } return; }
   if (ev.type === "status") {
     if (ev.state === "listening" && !dict.on) { native({ cmd: "mic.stop" }); return; }
@@ -936,7 +938,8 @@ var runQueue = Promise.resolve();
 var runCtl = null;             // lets Stop cancel a running program
 var agent = null;              // {t, stopped} while code from a reply is being run for the model
 var RUNNER = { libs: false, mac: false, dir: "" };   // what the server can run (from /api/settings)
-var runResults = Object.create(null);            // code text -> result of running it (this session only)
+var runResults = Object.create(null);            // chat id + code text -> result of running it (this session only)
+function runKey(code, t) { t = t || cur; return (t && t.id ? t.id : "") + "\n" + code; }   // per chat: the same code in two chats keeps two results
 var APP_DATA_MAX = 300000;      // characters an app may keep with localStorage
 function randHex(n) {
   var a = new Uint8Array(n), s = ""; window.crypto.getRandomValues(a);
@@ -1127,7 +1130,7 @@ $("#artFix").onclick = function () {
   inp.dispatchEvent(new Event("input")); inp.focus();
 };
 function runOutHtml(code) {
-  var r = runResults[code]; if (!r) return "";
+  var r = runResults[runKey(code)]; if (!r) return "";
   if (r.label) return '<div class="runout"><div class="runout-head' + (r.ok ? "" : " bad") + '"><span class="lbl">' + esc(r.label) + "</span></div></div>";
   var mac = r.where === "mac";
   if (r.running) return '<div class="runout"><div class="runout-head"><span class="lbl"><span class="shimmer">' + (r.asking ? "Waiting for your OK…" : mac ? "Running on your Mac…" : "Running…") + "</span></span></div></div>";
@@ -1138,7 +1141,8 @@ function runOutHtml(code) {
     (r.error || r.denied || r.aborted ? "" : '<button class="send-out" title="Put this in the message box so the model can see it">Send to chat</button><button class="copy-out">Copy</button>') + "</span></div>" +
     (text ? "<pre>" + esc(text) + "</pre>" : "") + pics + "</div>";
 }
-function paintRun(code) {
+function paintRun(code, t) {
+  if (t && t !== cur) return;                    // that chat isn't on screen; it is drawn when opened
   Array.prototype.forEach.call(document.querySelectorAll("#thread .code"), function (c) {
     if (!c.querySelector(".run-code") || c.querySelector("code").textContent !== code) return;
     var nx = c.nextElementSibling; if (nx && nx.classList.contains("runout")) nx.remove();
@@ -1167,23 +1171,24 @@ function runFetch(path, body) {
 }
 // kind: "py" or "sh". where: "box" (sealed, no asking) or "mac" (your real Mac, asks first).
 function startRun(kind, code, where, t) {
-  if (runResults[code] && runResults[code].running) return Promise.resolve({ error: "It's already running." });
-  runResults[code] = { running: true, where: where, asking: where === "mac" }; paintRun(code);
+  var rk = runKey(code, t);
+  if (runResults[rk] && runResults[rk].running) return Promise.resolve({ error: "It's already running." });
+  runResults[rk] = { running: true, where: where, asking: where === "mac" }; paintRun(code, t);
   var lang = kind === "sh" ? "bash" : "python", net = !!(t && t.net);
   var job = runQueue.then(function () {
-    if (where !== "mac") return runFetch("/api/run", { lang: "python", code: code });
+    if (where !== "mac") return runFetch("/api/run", { lang: "python", code: code, private: !!(t && t.private) });
     function ask() {
-      runResults[code] = { running: true, where: "mac", asking: true }; paintRun(code);
+      runResults[rk] = { running: true, where: "mac", asking: true }; paintRun(code, t);
       return askApproval(lang, code, net).then(function (ok) {
         if (!ok) return { denied: true, where: "mac" };
-        runResults[code] = { running: true, where: "mac" }; paintRun(code);
+        runResults[rk] = { running: true, where: "mac" }; paintRun(code, t);
         return runFetch("/api/exec", { lang: lang, code: code, net: net, id: ok.id, sig: ok.sig, private: !!(t && t.private) });
       });
     }
     if (lang !== "bash" || !autoAllowed(code)) return ask();
-    runResults[code] = { running: true, where: "mac" }; paintRun(code);       // on your no-asking list
+    runResults[rk] = { running: true, where: "mac" }; paintRun(code, t);       // on your no-asking list
     return runFetch("/api/exec", { lang: "bash", code: code, auto: true, private: !!(t && t.private) }).then(function (r) { return r.error && /needs your OK/.test(r.error) ? ask() : r; });
-  }).then(function (r) { r.where = r.where || where; if (t && t.private) r.priv = true; runResults[code] = r; paintRun(code); return r; });
+  }).then(function (r) { r.where = r.where || where; if (t && t.private) r.priv = true; runResults[rk] = r; paintRun(code, t); return r; });
   runQueue = job.then(function () {}, function () {});
   return job;
 }
@@ -1413,7 +1418,7 @@ function autoPreview(m) {
   var res = applyEdits(base.code, edits);
   edits.forEach(function (e, k) {
     var good = res.failed.indexOf(k) < 0;
-    runResults[e.raw] = { label: good ? "Applied to the app" : "Couldn't find those lines in the app", ok: good };
+    runResults[runKey(e.raw, t)] = { label: good ? "Applied to the app" : "Couldn't find those lines in the app", ok: good };
   });
   renderThread(true);
   if (res.failed.length) {
@@ -1520,7 +1525,7 @@ function webSearchThenSend(text) {
   var t = cur, moved = function () { return cur !== t || $("#input").value.trim() !== text; };
   webBusy = true; toast("Searching the web…");
   pending = pending.filter(function (a) { return !a.web; }); renderAttach();       // never two sets of results on one message
-  api("POST", "/api/websearch", { q: text.replace(/\s+/g, " ").slice(0, 300) }, 45000).then(function (j) {
+  api("POST", "/api/websearch", { q: text.replace(/\s+/g, " ").slice(0, 300), private: !!t.private }, 45000).then(function (j) {
     if (moved()) return;
     pending.push({ kind: "doc", id: j.id, name: j.name, words: j.words, tokens: j.tokens, web: true, sources: j.sources }); renderAttach();
   }, function (e) { if (!moved()) toast("Web search didn't work (" + e.message + "). Answering without it.", "err"); })
@@ -1569,6 +1574,7 @@ function macSection() {
   box.querySelector("#allowSave").onclick = function () {
     var names = Array.prototype.filter.call(grid.querySelectorAll("input"), function (c) { return c.checked; }).map(function (c) { return c.value; }).sort();
     var id = randHex(12);
+    setTimeout(function () { delete approvals[id]; }, 600000);      // an answer that never comes is dropped after 10 minutes
     approvals[id] = function (sig) {
       if (!sig) return toast("List not changed");
       api("POST", "/api/allow", { names: names, id: id, sig: sig }).then(function (j) { RUNNER.allow = j.names; toast("Saved"); }, function (e) { toast("Couldn't save: " + e.message, "err"); });
@@ -1599,7 +1605,7 @@ var privateNoted = {};
 function privateMedia(t) {
   var ids = [];
   (t.messages || []).forEach(function (m) { attsOf(m).forEach(function (a) { if (a.id) ids.push(a.id); }); });
-  Object.keys(runResults).forEach(function (k) { if (runResults[k].priv) (runResults[k].charts || []).forEach(function (id) { ids.push(id); }); });
+  Object.keys(runResults).forEach(function (k) { if (runResults[k].priv && k.indexOf(t.id + "\n") === 0) (runResults[k].charts || []).forEach(function (id) { ids.push(id); }); });
   return ids;
 }
 function notePrivateIds(ids) {
@@ -1705,6 +1711,10 @@ function transcribeLong(f, slot) {
   slot.kind = "doc"; slot.note = "long recording: getting ready…"; renderAttach();
   toast("That recording is over 10 minutes, so it is being written out as text instead. This takes a while (roughly a minute for every 4 minutes of sound). Keep the app open.");
   var ac = new AbortController(); slot.abort = function () { ac.abort(); };
+  // Each part reports back within a few minutes; 15 minutes of silence means it is stuck.
+  var idle = null, stale = false;
+  function poke() { clearTimeout(idle); idle = setTimeout(function () { stale = true; ac.abort(); }, 900000); }
+  poke();
   var hd = { "X-Filename": encodeURIComponent(slot.name) }; if (slot.priv) hd["X-Private"] = "1";
   return fetch("/api/transcribe", { method: "POST", headers: hd, body: f, signal: ac.signal }).then(function (r) {
     if (!r.ok || (r.headers.get("content-type") || "").indexOf("ndjson") < 0) return r.json().catch(function () { return {}; }).then(function (j) { throw new Error(j.error || "Couldn't write out that recording"); });
@@ -1712,6 +1722,7 @@ function transcribeLong(f, slot) {
     function handle(l) {
       if (!l.trim()) return;
       var ev; try { ev = JSON.parse(l); } catch (e) { return; }
+      poke();
       if (ev.error) throw new Error(ev.error);
       if (ev.part) { slot.note = "writing out part " + ev.part + " of " + ev.of + "…"; renderAttach(); }
       if (ev.done) result = ev;
@@ -1725,8 +1736,8 @@ function transcribeLong(f, slot) {
       });
     }
     return pump();
-  }).then(function (j) { delete slot.note; delete slot.abort; j.transcript = true; refreshModels(); return j; },
-          function (e) { refreshModels(); throw e; });
+  }).then(function (j) { clearTimeout(idle); delete slot.note; delete slot.abort; j.transcript = true; refreshModels(); return j; },
+          function (e) { clearTimeout(idle); refreshModels(); if (stale) throw new Error("Writing out the recording stopped answering for 15 minutes, so it was stopped. Try again."); throw e; });
 }
 
 /* ------------------------------------------------------------ quick ask (Control-Option-A, from the app shell) */
@@ -2224,7 +2235,7 @@ document.addEventListener("click", function (e) { if (!e.target.closest || !e.ta
 function inline(s) {
   var codes = [];
   s = s.replace(/`([^`\n]+)`/g, function (m, c) { codes.push("<code>" + c + "</code>"); return "\u0000" + (codes.length - 1) + "\u0000"; });
-  s = s.replace(/\[([^\]\n]{1,300})\]\((https?:\/\/[^\s)]{1,2000})\)/g, function (m, t, u) { codes.push('<a class="lnk" title="' + u + '">' + t + "</a>"); return "\u0000" + (codes.length - 1) + "\u0000"; });
+  s = s.replace(/\[([^\]\n]{1,300})\]\((https?:\/\/[^\s)]{1,2000})\)/g, function (m, t, u) { codes.push('<a class="lnk" title="' + u.replace(/"/g, "&quot;") + '">' + t + "</a>"); return "\u0000" + (codes.length - 1) + "\u0000"; });
   s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
        .replace(/__([^_\n]+)__/g, "<strong>$1</strong>")
        .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>")
@@ -2286,6 +2297,12 @@ function md(src) {
     // Folded code: just a one-line bar ("html · 214 lines") until you click Show code.
     // Your choice per block is kept while the reply is still being written.
     var nl = body ? body.split("\n").length : 0, fk = lang + "|" + body.slice(0, 120);
+    if (!codeOpen.hasOwnProperty(fk) && body.length) {
+      // Opened or closed while it was still short and being written: the key grew since, so carry the choice over.
+      for (var ok in codeOpen) {
+        if (ok.length < fk.length && ok.slice(0, lang.length + 1) === lang + "|" && ok.length > lang.length + 1 && fk.indexOf(ok) === 0) { codeOpen[fk] = codeOpen[ok]; delete codeOpen[ok]; break; }
+      }
+    }
     var folded = codeOpen.hasOwnProperty(fk) ? !codeOpen[fk] : (!S || S.fold_code !== false) && nl > 3;
     out += '<div class="code' + (folded ? " folded" : "") + '" data-fk="' + esc(fk) + '"><div class="code-head"><span class="lang">' + esc(lang) +
       '<span class="code-lines"> · ' + nl + " line" + (nl === 1 ? "" : "s") + (done ? "" : " · writing…") + '</span></span><span class="acts">' +
@@ -2852,6 +2869,7 @@ function renderList() {
   });
 }
 function startRename(el, t) {
+  if (!el.querySelector(".tt")) return;            // already renaming (a double-click inside the box)
   var tt = el.querySelector(".tt"), inp = document.createElement("input");
   inp.value = t.title; tt.replaceWith(inp); inp.focus(); inp.select();
   inp.onclick = function (e) { e.stopPropagation(); };
@@ -3121,6 +3139,7 @@ function startEdit(w, m) {
   acts.querySelector(".btn.primary").onclick = submit;
   acts.querySelector(".btn:not(.primary)").onclick = cancel;
   ta.onkeydown = function (e) {
+    if (e.isComposing) return;                     // Enter that confirms a typed accent or Asian character
     if (e.key === "Escape") { e.preventDefault(); cancel(); }
     else if (e.key === "Enter" && (e.metaKey || e.ctrlKey || (S.send_key === "enter" && !e.shiftKey && !e.altKey))) { e.preventDefault(); submit(); }
   };
@@ -3655,7 +3674,7 @@ function watchSection() {
     }).catch(function (e) { toast(e.message, "err"); });
   }
   q("#wtPick").onclick = function () {
-    if (NATIVE) { folderWaiter = setDir; native({ cmd: "pickFolder", for: "watch" }); return; }
+    if (NATIVE) { folderWaiter = { fn: setDir, "for": "watch" }; native({ cmd: "pickFolder", "for": "watch" }); return; }
     var v = window.prompt("Full path of the folder to watch", S.watch_dir || ""); if (v) setDir(v.trim());
   };
   q("#wtScan").onclick = function () { api("POST", "/api/watch", {}).then(draw).then(function () { setTimeout(load, 800); }).catch(function (e) { toast(e.message, "err"); }); };
@@ -3783,7 +3802,7 @@ function backupSection() {
     }).catch(function (e) { toast(e.message, "err"); });
   }
   q("#bkDir").onclick = function () {
-    if (NATIVE) { folderWaiter = setDir; native({ cmd: "pickFolder" }); return; }
+    if (NATIVE) { folderWaiter = { fn: setDir, "for": "backup" }; native({ cmd: "pickFolder", "for": "backup" }); return; }
     var v = window.prompt("Full path of the backup folder", (st && st.dir) || ""); if (v) setDir(v.trim());
   };
   q("#bkAuto").onchange = function () {
@@ -3882,11 +3901,16 @@ function modelRows(reload) {
 function updateModel(m, bt) {
   if (streaming || compacting || switching || agent) return toast(busyMsg());
   bt.disabled = true; bt.textContent = "Checking…";
-  fetch("/api/pull", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: m.id, update: true }) }).then(function (r) {
+  // Nothing heard for 3 minutes (stuck download, server gone): give up instead of spinning forever.
+  var ac = new AbortController(), idle = null;
+  function poke() { clearTimeout(idle); idle = setTimeout(function () { ac.abort(); }, 180000); }
+  poke();
+  fetch("/api/pull", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: m.id, update: true }), signal: ac.signal }).then(function (r) {
     if (!r.ok) return r.json().catch(function () { return {}; }).then(function (j) { throw new Error(j.error || "the check failed"); });
     var reader = r.body.getReader(), dec = new TextDecoder(), buf = "", failed = null, ok = false, moved = 0;
     function handle(l) {
       var ev; try { ev = JSON.parse(l); } catch (e) { return; }
+      poke();
       if (ev.error) failed = ev.error;
       if (ev.total && ev.completed < ev.total) { moved = Math.max(moved, ev.total); bt.textContent = "Downloading… " + Math.round((ev.completed || 0) / ev.total * 100) + "%"; }
       if (ev.status === "success") ok = true;
@@ -3901,8 +3925,8 @@ function updateModel(m, bt) {
     }
     return pump();
   }).then(function (moved) { toast(moved > 50e6 ? m.label + " was updated to the newest version" : m.label + " is already the newest version"); return refreshModels(); })
-    .catch(function (e) { toast("Couldn't check " + m.label + ": " + (/Failed to fetch|Load failed|NetworkError/i.test(e.message) ? "no connection" : e.message), "err"); })
-    .then(function () { bt.disabled = false; bt.textContent = "Check for a newer version"; });
+    .catch(function (e) { toast("Couldn't check " + m.label + ": " + (e.name === "AbortError" ? "nothing happened for 3 minutes, so it was stopped" : /Failed to fetch|Load failed|NetworkError/i.test(e.message) ? "no connection" : e.message), "err"); })
+    .then(function () { clearTimeout(idle); bt.disabled = false; bt.textContent = "Check for a newer version"; });
 }
 /* ---------- check my app ---------- */
 function runSelfCheck(bt, box) {

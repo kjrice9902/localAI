@@ -209,7 +209,8 @@ func hidingSelectors(_ html: String) -> [String] {
     for m in blocks.matches(in: html, range: NSRange(location: 0, length: ns.length)).prefix(50) {
         var css = ns.substring(with: m.range(at: 1))
         if css.utf16.count > 500_000 { css = String(css.prefix(500_000)) }
-        css = css.replacingOccurrences(of: "/\\*.*?\\*/", with: " ", options: .regularExpression)
+        css = css.replacingOccurrences(of: "(?s)/\\*.*?\\*/", with: " ", options: .regularExpression)   // comments, also over several lines
+        if let open = css.range(of: "/*") { css = String(css[..<open.lowerBound]) }    // an unclosed comment runs to the end, as in a browser
         // One pass: "prelude { declarations }", stepping inside @media and friends.
         var prelude = "", decl = "", inRule = false
         for ch in css {
@@ -265,8 +266,11 @@ if CommandLine.arguments.count > 2 && CommandLine.arguments[1] == "--rich" {
         css += ",[style*=\"opacity:0.0\" i],[style*=\"opacity: 0.0\" i],[style*=\"opacity:.0\" i],[style*=\"opacity: .0\" i],[hidden],[aria-hidden=\"true\" i]"
         // The same tricks done through the page's own style sheet (a class or id that hides).
         let own = hidingSelectors(String(decoding: data.prefix(4_000_000), as: UTF8.self))
-        if !own.isEmpty { css += "," + own.joined(separator: ",") }
-        data.append(Data(("<style>" + css + "{display:none !important}</style>").utf8))
+        // One rule per page selector: a selector the reader can't parse voids only its own rule,
+        // never the built-in list (an invalid selector in a list throws the whole rule away).
+        css += "{display:none !important}"
+        for sel in own { css += "\n" + sel + "{display:none !important}" }
+        data.append(Data(("<style>" + css + "</style>").utf8))
         loaded = try? NSAttributedString(data: data, options: opts, documentAttributes: nil)
     } else {
         loaded = try? NSAttributedString(url: url, options: opts, documentAttributes: nil)

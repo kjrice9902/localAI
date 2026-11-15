@@ -1832,12 +1832,22 @@ def make_backup(path):
                 full = os.path.join(folder, name)
                 if arc != "threads" and name[:16] in secret:
                     continue
-                if os.path.isfile(full) and not os.path.islink(full) and not name.endswith(".tmp"):
-                    try:
-                        z.write(full, arc + "/" + name,
-                                compress_type=zipfile.ZIP_STORED if name.endswith((".jpg", ".wav")) else zipfile.ZIP_DEFLATED)
-                    except FileNotFoundError:
-                        continue                   # deleted while the backup was being built
+                if name.endswith(".tmp"):
+                    continue
+                # Opened once, without following links, then checked and copied from that same handle:
+                # a file swapped for a link after a check can't slip something else into the backup.
+                try:
+                    fd = os.open(full, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+                except OSError:
+                    continue                       # gone, or a link
+                with os.fdopen(fd, "rb") as src:
+                    st = os.fstat(src.fileno())
+                    if not stat.S_ISREG(st.st_mode):
+                        continue
+                    zi = zipfile.ZipInfo(arc + "/" + name, max((1980, 1, 1, 0, 0, 0), time.localtime(st.st_mtime)[:6]))   # ZIP can't store dates before 1980
+                    zi.compress_type = zipfile.ZIP_STORED if name.endswith((".jpg", ".wav")) else zipfile.ZIP_DEFLATED
+                    with z.open(zi, "w", force_zip64=True) as dst:
+                        shutil.copyfileobj(src, dst, 1 << 20)
 
 
 def _read_capped(z, info, cap):
@@ -1977,6 +1987,15 @@ def restore_backup(path):
                     got["skipped_bad"] += 1
                     continue
                 t["id"] = tid
+                # A backup file can be edited by hand: break chat-template markers (fake system or model
+                # turns) in everything that is sent to a model again.
+                for msg in t["messages"]:
+                    if isinstance(msg, dict):
+                        for fk in ("content", "thinking", "draft"):
+                            if isinstance(msg.get(fk), str):
+                                msg[fk] = clean_untrusted(msg[fk])
+                if isinstance(t.get("summary"), str):
+                    t["summary"] = clean_untrusted(t["summary"])
                 with _lock:
                     try:
                         with open(thread_path(tid)) as fh:
@@ -2317,9 +2336,12 @@ def backup_to_folder():
         if shutil.disk_usage(folder).free < os.path.getsize(out) + (50 << 20):
             raise RuntimeError("There isn't enough free space in the backup folder.")
         name = "Local AI backup %s.%s" % (time.strftime("%Y-%m-%d %H%M"), ext)
-        part = os.path.join(folder, "." + name + ".part")
+        part = os.path.join(folder, ".%s.%s.part" % (name, secrets.token_hex(6)))
         try:
-            shutil.copyfile(out, part)
+            # A new file only (never through a link someone left in the folder), then renamed into place.
+            fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            with os.fdopen(fd, "wb") as dst, open(out, "rb") as src:
+                shutil.copyfileobj(src, dst, 1 << 20)
             os.replace(part, os.path.join(folder, name))
         except OSError as exc:
             _rm(part)
@@ -3273,7 +3295,8 @@ def watch_scan():
             try:
                 st = os.fstat(fd)
                 inside = (os.path.realpath(full) + "/").startswith(os.path.realpath(root) + "/")
-                if not stat.S_ISREG(st.st_mode) or not st.st_size or st.st_size > WATCH_MAX_BYTES or not inside:
+                # st_nlink > 1: a hard link could point at any file of yours outside the folder
+                if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1 or not st.st_size or st.st_size > WATCH_MAX_BYTES or not inside:
                     skipped += 1
                     continue
                 handle = os.fdopen(os.dup(fd), "rb")
@@ -4027,6 +4050,13 @@ class Handler(BaseHTTPRequestHandler):
         if length > max_bytes:
             self._json(413, {"error": "That file is too big (over %d MB)." % (max_bytes // 1048576)})
             return None
+        try:
+            free = shutil.disk_usage(DATA_DIR).free
+        except OSError:
+            free = None
+        if free is not None and free < length * 3 + (1 << 30):     # room for the file, its converted copy, and 1 GB to spare
+            self._json(507, {"error": "Your Mac is almost out of disk space, so that file wasn't added. Free some space and try again."})
+            return None
         name = safe_filename(self.headers.get("X-Filename"))
         ext = re.sub(r"[^a-z0-9]", "", os.path.splitext(name)[1].lower())[:10]
         src = os.path.join(tmp, "in." + (ext or "bin"))
@@ -4640,7 +4670,13 @@ class Handler(BaseHTTPRequestHandler):
             if len(code) > RUN_MAX_CODE:
                 return self._json(413, {"error": "That program is too long to run here."})
             try:
-                return self._json(200, run_code(code, stop=self._client_gone, seconds=load_settings()["run_seconds"]))
+                res = run_code(code, stop=self._client_gone, seconds=load_settings()["run_seconds"])
+                if payload.get("private") is True and res.get("charts"):
+                    try:
+                        private_note(res["charts"])      # a private chat's charts are erased with it, even after a crash
+                    except OSError:
+                        pass
+                return self._json(200, res)
             except InterruptedError:
                 self.close_connection = True
                 return
@@ -4654,7 +4690,13 @@ class Handler(BaseHTTPRequestHandler):
             if len(q) < 2:
                 return self._json(400, {"error": "Nothing to search for."})
             try:
-                return self._json(200, web_search(q))
+                res = web_search(q)
+                if payload.get("private") is True:
+                    try:
+                        private_note([res["id"]])         # noted before the page sees it, so no gap
+                    except OSError:
+                        pass
+                return self._json(200, res)
             except RuntimeError as exc:
                 return self._json(502, {"error": str(exc)})
             except Exception:
@@ -4944,9 +4986,11 @@ class Handler(BaseHTTPRequestHandler):
                         self.close_connection = True
                         return
                     try:
-                        raw = resp.read()
+                        raw = resp.read(MAX_UPSTREAM_BYTES + 1)
                     finally:
                         conn.close()
+                    if len(raw) > MAX_UPSTREAM_BYTES:
+                        raise RuntimeError("the model server sent back far too much")
                     if resp.status == 400 and b"think" in raw.lower() and "think" in upstream:
                         upstream.pop("think", None)
                         continue

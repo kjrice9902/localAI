@@ -34,7 +34,15 @@ rm -rf "$APP/Contents/Resources/ui"
 cp -R "$SRC/Resources/ui" "$APP/Contents/Resources/ui"
 if [ -f "$SRC/Resources/LocalAI.icns" ]; then
   cp "$SRC/Resources/LocalAI.icns" "$APP/Contents/Resources/LocalAI.icns"
+else
+  echo "warning: Resources/LocalAI.icns is missing; the app keeps its old icon" >&2
 fi
+# A file removed from Resources/ is removed from the app too (the engine in bin/ stays).
+for f in "$APP/Contents/Resources"/*(N); do
+  n="${f:t}"
+  [ "$n" = "bin" ] && continue
+  [ -e "$SRC/Resources/$n" ] || rm -rf "$f"
+done
 # Leftovers from the old Qwen Local build.
 rm -f "$APP/Contents/MacOS/Qwen" "$APP/Contents/Resources/Qwen.icns" \
       "$APP/Contents/Resources/server.py.bak" "$APP/Contents/Resources/ui/index.html.bak"

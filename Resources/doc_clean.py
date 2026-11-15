@@ -6,7 +6,7 @@
 import json, re, sys, zipfile
 
 MAIN = (b"http://schemas.openxmlformats.org/wordprocessingml/2006/main", b"http://purl.oclc.org/ooxml/wordprocessingml/main")
-TAG = re.compile(rb"<(/?)([A-Za-z_][\w.\-]*):([A-Za-z]+)((?:\s[^>]*?)?)(/?)>", re.S)
+TAG = re.compile(rb"<(/?)([A-Za-z_][\w.\-]*):([A-Za-z]+)((?:\s[^<>]*?)?)(/?)>", re.S)   # [^<>]: an unclosed tag stops at the next one (no slow rescans)
 VAL = re.compile(rb'[\w.\-]+:val\s*=\s*["\']([^"\']*)["\']')
 SID = re.compile(rb'[\w.\-]+:styleId\s*=\s*["\']([^"\']*)["\']')
 HIDE = (b"vanish", b"specVanish", b"webHidden")
@@ -215,7 +215,7 @@ def clean_rtf(data):
 
 ODF_TEXT = b"urn:oasis:names:tc:opendocument:xmlns:text:1.0"
 ODF_STYLE = b"urn:oasis:names:tc:opendocument:xmlns:style:1.0"
-XTOK = re.compile(rb"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>|"
+XTOK = re.compile(rb"<!--.*?(?:-->|\Z)|<!\[CDATA\[.*?(?:\]\]>|\Z)|<\?.*?(?:\?>|\Z)|"   # unclosed: runs to the end once
                   rb"<(/?)([A-Za-z_][\w.\-]*:)?([A-Za-z_][\w.\-]*)((?:\s+[\w.\-:]+\s*=\s*(?:\"[^\"]*\"|'[^']*'))*)\s*(/?)>", re.S)
 XATTR = re.compile(rb"([\w.\-]+:)?([\w.\-]+)\s*=\s*(?:\"([^\"]*)\"|'([^']*)')")
 
@@ -285,7 +285,11 @@ def clean_odf(data, hidden_styles):
                     runs += 1
             else:
                 out.append(gap)
-                out.append(m.group(0))
+                tok = m.group(0)
+                if tok.endswith((b"-->", b"]]>", b"?>")):
+                    out.append(tok)
+                else:
+                    runs += 1                          # never closed: the rest of the file is dropped, not passed on unchecked
             pos = m.end()
             continue
         if hid:

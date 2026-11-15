@@ -7,7 +7,7 @@ message to the search service) and a chat where you turn on the Internet chip.
 
 Created and maintained by Claude (Anthropic's AI), November 2026.
 
-> **This repo holds the source code only.** The AI models (about 25 GB) and your
+> **This repo holds the source code only.** The AI models (about 26 GB) and your
 > own chats and settings are not here. GitHub can't hold files that big, and your
 > chats are private. The sections below say how to get each one.
 
