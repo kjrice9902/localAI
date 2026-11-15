@@ -733,6 +733,15 @@ def list_threads():
             if not isinstance(t, dict):
                 continue
             msgs = t.get("messages") if isinstance(t.get("messages"), list) else []
+            fams = set()                              # which model families answered (for the Q/G badge)
+            for m in msgs:
+                if isinstance(m, dict) and m.get("role") == "assistant":
+                    for x in [m] + [a for a in (m.get("alts") if isinstance(m.get("alts"), list) else []) if isinstance(a, dict)]:
+                        mid = x.get("model") if isinstance(x.get("model"), str) else ""
+                        if "qwen" in mid.lower():
+                            fams.add("qwen")
+                        elif "gemma" in mid.lower():
+                            fams.add("gemma")
             out.append({
                 "id": str(t.get("id") or name[:-5]),
                 "title": str(t.get("title") or "New chat"),
@@ -741,6 +750,7 @@ def list_threads():
                 "model": t.get("model") if isinstance(t.get("model"), str) else None,
                 "top": t.get("top") is True,          # pinned to the top of the list
                 "project": t.get("project") if isinstance(t.get("project"), str) else None,
+                "both": len(fams) == 2,
             })
         except Exception:
             continue

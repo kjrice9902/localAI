@@ -235,6 +235,21 @@ input, textarea, select { font: inherit; color: inherit; }
 .msg .meta .stats { margin-left: 4px; font-variant-numeric: tabular-nums; }
 .msg .meta .stats i { font-style: normal; color: var(--muted); }
 .mtag { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); margin-left: 4px; }
+/* Only in a chat both models answered in: Qwen's replies in orange text, Gemma's in blue */
+#thread.mixed .msg[data-fam="qwen"] .body { color: #ff9447; }
+#thread.mixed .msg[data-fam="gemma"] .body { color: #6aa5ff; }
+[data-theme="light"] #thread.mixed .msg[data-fam="qwen"] .body { color: #c2410c; }
+[data-theme="light"] #thread.mixed .msg[data-fam="gemma"] .body { color: #1d4ed8; }
+#thread.mixed .msg[data-fam="qwen"] .mtag { color: #ff9447; border-color: currentColor; }
+#thread.mixed .msg[data-fam="gemma"] .mtag { color: #6aa5ff; border-color: currentColor; }
+[data-theme="light"] #thread.mixed .msg[data-fam="qwen"] .mtag { color: #c2410c; }
+[data-theme="light"] #thread.mixed .msg[data-fam="gemma"] .mtag { color: #1d4ed8; }
+#thread.mixed .msg .body .code, #thread.mixed .msg .body .runout { color: var(--text); }   /* code keeps its normal colors */
+/* Sidebar: a chat both models answered in */
+.qg { flex: none; display: inline-flex; margin-left: 4px; border-radius: 6px; overflow: hidden; font-size: 9.5px; font-weight: 700; line-height: 1; }
+.qg i { font-style: normal; padding: 3px 4px; color: #fff; }
+.qg i:first-child { background: linear-gradient(135deg, #ff7a1a, #ff3b5c); }
+.qg i:last-child { background: linear-gradient(135deg, #2f7bff, #16b364); }
 
 .orb { width: 28px; height: 28px; border-radius: 50%; background: var(--orb); position: relative; box-shadow: 0 0 18px color-mix(in srgb, var(--a1) 45%, transparent); }
 .orb::after { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, rgba(255,255,255,.9), rgba(255,255,255,.15) 45%, transparent 70%); }
@@ -2073,6 +2088,15 @@ function looksLikeEdit(text) { return EDIT_RE.test(text) && !NOT_EDIT_RE.test(te
 var EDIT_RE = /^\s*(?:please\s+)?(?:(?:can|could|would) you\s+)?(?:now\s+|also\s+|then\s+)?(?:add|put|place|insert|remove|erase|delete|take out|get rid of|replace|swap|change|recolou?r|turn|make|give|paint)\s+(?:in\s+|out\s+)?(?:a|an|the|some|it|this|that|these|those|him|her|them|my|his|its|their|more|less|everything)\b/i;
 // "Draw a cat", "make me a picture of...", "generate an image of..." -> the picture maker.
 var PIC_RE = /^\s*(?:please\s+)?(?:can you\s+|could you\s+)?(?:(?:draw|paint|sketch|illustrate)\s+(?:me\s+|us\s+)?(?:a|an|the|some|two|three|four)\b|(?:make|create|generate|give|show)\s+(?:me\s+)?(?:an?\s+|some\s+)?(?:picture|pic|image|photo|drawing|painting|illustration|portrait|wallpaper|logo|artwork)s?\b)/i;
+// Which model families answered in these messages (counting kept alternative answers too).
+function bothModels(msgs) {
+  var q = false, g = false;
+  (msgs || []).forEach(function (m) {
+    if (!m || m.role !== "assistant") return;
+    [m].concat(m.alts || []).forEach(function (x) { var id = String((x && x.model) || "").toLowerCase(); if (id.indexOf("qwen") >= 0) q = true; else if (id.indexOf("gemma") >= 0) g = true; });
+  });
+  return q && g;
+}
 function shortOf(id) { var m = modelById(id); return m ? m.short : String(id || "").split(":")[0]; }
 function colorsOf(id) { var k = String(id || "").replace(/[^a-z].*$/i, "").toLowerCase(); return MODEL_COLORS[k] || ["#2f7bff", "#00c8ff"]; }
 function gradOf(id) { var c = colorsOf(id); return "linear-gradient(135deg," + c[0] + "," + c[1] + ")"; }
@@ -2844,6 +2868,10 @@ function renderList() {
       highlightInto(el.querySelector(".tt"), t.title, q);
       if (t.snippet) { var sn = document.createElement("div"); sn.className = "tsnip"; highlightInto(sn, t.snippet, q); el.querySelector(".tcol").appendChild(sn); }
     } else el.querySelector(".tt").textContent = t.title;
+    if (cur && cur.id === t.id ? bothModels(cur.messages) : t.both) {
+      var qg = document.createElement("span"); qg.className = "qg"; qg.title = "Both Qwen and Gemma answered in this chat"; qg.innerHTML = "<i>Q</i><i>G</i>";
+      el.insertBefore(qg, el.querySelector(".pinmark"));
+    }
     if (busyHere) { var bz = document.createElement("span"); bz.className = "tbusy"; bz.title = "Answering…"; bz.innerHTML = "<i></i><i></i><i></i>"; el.insertBefore(bz, el.querySelector(".pinmark")); }
     el.onclick = function () { openThread(t.id, useHits ? q : ""); };
     el.querySelector(".ren").onclick = function (e) { e.stopPropagation(); startRename(el, t); };
@@ -3021,6 +3049,12 @@ function msgEl(m, idx, live) {
   return w;
 }
 function fillAssistant(w, m, live, idx) {
+  // In a chat both models answered in, Qwen writes in orange and Gemma in blue (see #thread.mixed in the CSS).
+  var fam = /qwen/i.test(m.model || "") ? "qwen" : /gemma/i.test(m.model || "") ? "gemma" : "";
+  if (w.dataset.fam !== fam || !live) {
+    w.dataset.fam = fam;
+    var th = $("#thread"); if (th && cur) th.classList.toggle("mixed", bothModels(cur.messages));
+  }
   var slot = w.querySelector(".think-slot");
   var det = slot.querySelector("details");
   if (m.thinking && !det) { slot.innerHTML = thinkHtml(m, live); det = slot.querySelector("details"); }
@@ -3158,6 +3192,7 @@ function togglePin() {
 $("#pinBadge").onclick = togglePin;
 function renderThread(keepScroll) {
   refreshRunChips(); refreshProjectUI();
+  $("#thread").classList.toggle("mixed", !!(cur && bothModels(cur.messages)));
   $("#privBadge").hidden = !(cur && cur.private); if (cur && cur.private) $("#projSel").hidden = true;
   if (cur && cur._pend && !streaming && !agent && !compacting && !switching) {
     delete cur._pend;
