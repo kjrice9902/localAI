@@ -139,10 +139,12 @@ func visible(_ line: LayerLine, seen: [Seen], pageWords: Set<String>) -> Bool {
     let near = seen.filter { $0.rect.intersects(grown) }
     if near.isEmpty { return false }                        // nothing can be seen where this line is
     if w.count < 2 { return true }                           // one short token: trust the geometry
-    if r.height < 7 { return true }                          // fine print: the recognizer misreads it; geometry is enough
     var local = Set<String>()
     for s in near { local.formUnion(words(s.text)) }
     let unseen = w.filter { !local.contains($0) }.count
+    // Fine print: the recognizer misreads some of it, so it gets more slack, but a small line whose
+    // words were almost all not seen (white-on-white text laid beside real text) is still dropped.
+    if r.height < 7 { return !(unseen >= 3 && Double(unseen) / Double(w.count) > 0.7) }
     return !(unseen >= 2 && Double(unseen) / Double(w.count) > 0.5)
 }
 

@@ -1776,9 +1776,12 @@ var UNSURE_TEXT = 'After your answer, add one last line in exactly this form: "S
 var SURE_RE = /(?:^|\n)[ \t>]*(?:[-*][ \t]+)?[*_`]*Sure[ \t]*:[ \t*_`]*(high|medium|low)[*_`]*(?:(?:[ \t]+[-\u2013\u2014]|[ \t]*[:(])[ \t]*([^\n]*?))?[ \t)*_`.]*$/i;
 function takeSure(m) {
   if (!m || !m.content || !S || !S.show_unsure) return;
-  var c = m.content.replace(/\s+$/, ""), x = SURE_RE.exec(c);
+  // Only the last line is looked at, and only if it is short: the pattern is slow on a very long line.
+  var c = m.content.replace(/\s+$/, ""), cut = c.lastIndexOf("\n") + 1, tail = c.slice(cut);
+  if (tail.length > 400) return;
+  var x = SURE_RE.exec(tail);
   if (!x) return;
-  var rest = c.slice(0, x.index).replace(/\s+$/, "");
+  var rest = c.slice(0, cut + x.index).replace(/\s+$/, "");
   if (!rest) return;                               // the whole reply was that one line: leave it
   m.content = rest;
   m.sure = { level: x[1].toLowerCase(), why: (x[2] || "").trim().slice(0, 200) };
@@ -2778,7 +2781,8 @@ function renderSection() {
 function newThread() { return { id: uid(), title: DEFAULT_TITLE, created: Date.now(), updated: Date.now(), messages: [], summary: "", compactedUpTo: 0, ctxTokens: 0, model: ACTIVE, project: projFilter || undefined }; }
 function normalize(t) {
   t.messages = t.messages || [];
-  t.messages.forEach(function (x) { if (x) { delete x.opining; delete x.stage; } });      // left over if the app quit mid-step t.summary = t.summary || ""; t.compactedUpTo = t.compactedUpTo || 0; t.ctxTokens = t.ctxTokens || 0;
+  t.summary = t.summary || ""; t.compactedUpTo = t.compactedUpTo || 0; t.ctxTokens = t.ctxTokens || 0;
+  t.messages.forEach(function (x) { if (x) { delete x.opining; delete x.stage; } });      // left over if the app quit mid-step
   if (Array.isArray(t.appVers) && t.appVers.length && !looksLikePage(t.appVers[appCurIndex(t)].code)) {
     // The saved "app" is edit instructions or loose code, not a page (an old bug). Go back to the last real page in the chat.
     var good = null, fr = /```([^\n`]*)\n([\s\S]*?)\n?```/g, fx;

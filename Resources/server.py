@@ -927,9 +927,12 @@ def imagine(prompt, size, stop=None, source=None):
     w, h = IMAGE_SIZES.get(size, IMAGE_SIZES["square"])
     if not _imagine_lock.acquire(blocking=False):
         raise RuntimeError("Another picture is being drawn. Try again when it's done.")
-    tmp = scratch("localai-draw-")
+    tmp = None
     try:
+        tmp = scratch("localai-draw-")           # inside the try: if this fails the lock below is still released
         if source is not None:
+            if not isinstance(source, str) or not IMAGE_ID_RE.match(source):
+                raise RuntimeError("Couldn't open that picture.")
             # A private copy of the picture, at most 1024 px on its long side
             # (bigger is much slower). The editor keeps its shape.
             src = os.path.join(tmp, "src.png")
@@ -976,7 +979,8 @@ def imagine(prompt, size, stop=None, source=None):
         if _state["warming"] == "picture":
             _state["warming"] = None
         forget_health()
-        shutil.rmtree(tmp, ignore_errors=True)
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
         _imagine_lock.release()
 
 
@@ -1067,7 +1071,7 @@ def clean_messages(messages):
     if not isinstance(messages, list) or not messages or len(messages) > 5000:
         return None
     for m in messages:
-        if not isinstance(m, dict) or m.get("role") not in ("system", "user", "assistant", "tool"):
+        if not isinstance(m, dict) or m.get("role") not in ("system", "user", "assistant"):
             return None
         if not isinstance(m.get("content", ""), str):
             return None
@@ -1645,7 +1649,7 @@ def private_end():
 def auto_delete():
     """Settings > Privacy: delete chats nobody has touched in N days."""
     days = load_settings().get("auto_delete_days") or 0
-    if not days:
+    if not isinstance(days, int) or isinstance(days, bool) or days <= 0:
         return 0
     cutoff = (time.time() - days * 86400) * 1000          # "updated" is in milliseconds
     gone = 0
@@ -1935,6 +1939,9 @@ def restore_backup(path):
             m = _BK_MEDIA.match(name)
             if m and _BK_EXT[m.group(1)] == m.group(3):
                 kind, mid = m.group(1), m.group(2)
+                if os.path.exists({"docs": doc_path, "images": image_path, "audio": audio_path}[kind](mid)):
+                    got["files"] += 1                      # this Mac already has that file: keep its own copy
+                    continue
                 tmp = scratch("localai-restore-")
                 try:
                     src = os.path.join(tmp, "in." + m.group(3))
@@ -2100,6 +2107,9 @@ def search_threads(q, limit=40):
                     continue
                 count += low.count(q)
                 if not snippet:
+                    if len(low) != len(text):             # a few letters change length when lowercased: find the spot in the real text
+                        hit = re.search(re.escape(q), text, re.I)
+                        k = hit.start() if hit else max(0, min(k, len(text) - 1))
                     a, b = max(0, k - 60), min(len(text), k + len(q) + 80)
                     snippet = ("…" if a else "") + " ".join(text[a:b].split()) + ("…" if b < len(text) else "")
             if count or q in e["title"].lower():
@@ -2915,6 +2925,8 @@ def _ip_public(text):
         return False
     if ip.version == 6:
         inner = ip.ipv4_mapped or ip.sixtofour or (ip.teredo[1] if ip.teredo else None)
+        if inner is None and (ip in ipaddress.ip_network("64:ff9b::/96") or ip in ipaddress.ip_network("64:ff9b:1::/48")):
+            inner = ipaddress.ip_address(int(ip) & 0xFFFFFFFF)     # NAT64: the real destination is the IPv4 address in the last 4 bytes
         if inner is not None:
             ip = inner
     if ip.version == 4 and ip in ipaddress.ip_network("192.0.0.0/24"):
@@ -3031,7 +3043,7 @@ def _html_text(page):
         if k < 0:                      # a tag that never ends: nothing after it is text
             break
         name = m.group(2)
-        if not m.group(1) and name in _HTML_SKIP:
+        if not m.group(1) and name in _HTML_SKIP and page[k - 1] != "/":      # <svg .../> closes itself: nothing to skip
             e = low.find("</" + name, k + 1)
             k = -1 if e < 0 else page.find(">", e)
             if k < 0:
@@ -3125,6 +3137,8 @@ def auto_ok(code):
     # Only inside the projects folder: anything that points elsewhere (an absolute
     # path, your home folder, a step up with ..) goes to the approval window instead.
     for w in words[1:]:
+        if any(ch in w for ch in "*?[]"):         # a wildcard can reach the folder above (".*" matches ".."): ask first
+            return False
         if w.startswith(("/", "~")) or ".." in w.split("/") or "=/" in w or "=~" in w or (w.startswith("-") and ("/" in w or "~" in w)):
             return False
     return True
@@ -4860,7 +4874,10 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
         if path == "/api/storage/clean":
-            what = (self._body() or {}).get("what")
+            body = self._body()
+            if body is None:                               # _body already answered (bad length or too big)
+                return
+            what = body.get("what")
             if what == "unused":
                 return self._json(200, {"removed": sweep_media(min_age=3600)})
             if what == "logs":

@@ -10,6 +10,10 @@ TAG = re.compile(rb"<(/?)([A-Za-z_][\w.\-]*):([A-Za-z]+)((?:\s[^<>]*?)?)(/?)>", 
 VAL = re.compile(rb'[\w.\-]+:val\s*=\s*["\']([^"\']*)["\']')
 SID = re.compile(rb'[\w.\-]+:styleId\s*=\s*["\']([^"\']*)["\']')
 HIDE = (b"vanish", b"specVanish", b"webHidden")
+DEFAULT = re.compile(rb'[\w.\-]+:default\s*=\s*["\']\s*(1|true|on)\s*["\']', re.I)
+STYPE = re.compile(rb'[\w.\-]+:type\s*=\s*["\']([^"\']*)["\']')
+# Keys in the style table for what applies when nothing names a style (no real style id starts with a NUL byte).
+BASE, PARA, CHAR = b"\x00base", b"\x00para", b"\x00char"
 TEXT = (b"t", b"delText", b"instrText")
 
 
@@ -34,19 +38,35 @@ def val_of(attrs):
 
 
 def style_table(data):
-    """style id -> True/False (says hidden / says not hidden), following basedOn."""
+    """style id -> True/False (says hidden / says not hidden), following basedOn.
+    Also what applies with no style named: BASE (the document defaults), PARA
+    (the default paragraph style) and CHAR (the default character style)."""
     wp = prefixes(data)
     own, parent, cur, in_rpr = {}, {}, None, 0
+    ids, defaults, in_dd, dd_rpr, base = set(), {}, False, 0, None
     for m in TAG.finditer(data):
         close, pre, name, attrs, selfc = m.groups()
         if pre not in wp:
             continue
-        if name == b"style":
+        if name == b"docDefaults":
+            in_dd, dd_rpr = (not close and not selfc), 0
+        elif in_dd:
+            # <w:docDefaults><w:rPrDefault><w:rPr><w:vanish/>: every run starts out hidden.
+            if name == b"rPr":
+                dd_rpr += -1 if close else (0 if selfc else 1)
+            elif name in HIDE and not close and dd_rpr > 0:
+                base = val_on(attrs)
+        elif name == b"style":
             if close:
                 cur = None
             elif not selfc:
                 s = SID.search(attrs or b"")
                 cur, in_rpr = (s.group(1) if s else None), 0
+                if cur is not None:
+                    ids.add(cur)
+                    kind = STYPE.search(attrs or b"")
+                    if DEFAULT.search(attrs or b"") and kind:
+                        defaults.setdefault({b"paragraph": PARA, b"character": CHAR}.get(kind.group(1).strip().lower()), cur)
         elif cur is not None:
             if name == b"basedOn" and not close:
                 parent[cur] = val_of(attrs)
@@ -55,7 +75,7 @@ def style_table(data):
             elif name in HIDE and not close and in_rpr > 0:
                 own[cur] = val_on(attrs)
     out = {}
-    for sid in set(own) | set(parent):
+    for sid in set(own) | set(parent) | ids:
         seen, s = set(), sid
         while s is not None and s not in seen:
             seen.add(s)
@@ -63,6 +83,13 @@ def style_table(data):
                 out[sid] = own[s]
                 break
             s = parent.get(s)
+        if sid not in out and base is not None:
+            out[sid] = base                           # no style in the chain says: the document default decides
+    if base is not None:
+        out[BASE] = base
+    for key in (PARA, CHAR):
+        if defaults.get(key) in out:
+            out[key] = out[defaults[key]]
     return out
 
 
@@ -80,14 +107,15 @@ def clean_part(data, styles):
                 if paras:
                     paras.pop()
             elif not selfc:
-                paras.append([None])
+                paras.append([styles.get(PARA)])          # no style named yet: the default paragraph style applies
         elif name == b"pStyle" and not close and paras and not runs:
-            paras[-1][0] = styles.get(val_of(attrs))
+            paras[-1][0] = styles.get(val_of(attrs), styles.get(BASE))
         elif name == b"r":
             if close:
                 if runs:
                     r = runs.pop()
-                    verdict = r["own"] if r["own"] is not None else (r["style"] if r["style"] is not None else (paras[-1][0] if paras else None))
+                    verdict = next((v for v in (r["own"], r["style"], paras[-1][0] if paras else None,
+                                                styles.get(CHAR), styles.get(BASE)) if v is not None), None)
                     if verdict and r["spans"]:
                         if any(b > a for a, b in r["spans"]):
                             hidden += 1
